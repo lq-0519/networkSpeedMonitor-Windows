@@ -45,7 +45,7 @@ internal sealed class OverviewWindow : Window
         var text=new StackPanel();var label=Ui.Text(icon+"  "+name,12,color);text.Children.Add(label);var value=Ui.Text("—",17,bold:true);value.Margin=new Thickness(0,4,0,2);text.Children.Add(value);var subtitle=Ui.Text("等待采样",10,Ui.Muted);text.Children.Add(subtitle);grid.Children.Add(text);
         var chart=new TrendChart{Height=42,Compact=true,Color=color,VerticalAlignment=VerticalAlignment.Center};Grid.SetColumn(chart,1);grid.Children.Add(chart);
         var border=Ui.Panel(grid,new Thickness(12,9,12,9));border.Cursor=Cursors.Hand;
-        var button=new Button{Content=border,Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),Margin=new Thickness(0,0,0,7),HorizontalContentAlignment=HorizontalAlignment.Stretch,Cursor=Cursors.Hand};
+        var button=new Button{Content=border,Style=(Style)FindResource("ResourceRowButton"),Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),Margin=new Thickness(0,0,0,7),HorizontalContentAlignment=HorizontalAlignment.Stretch,Cursor=Cursors.Hand};
         System.Windows.Automation.AutomationProperties.SetName(button,name+"详情");
         button.MouseEnter+=(_,_)=>{if(locked==null)OpenDetail(key,false);};
         button.Click+=(_,_)=>{locked=locked==key?null:key;OpenDetail(key,locked!=null);};
@@ -66,14 +66,19 @@ internal sealed class OverviewWindow : Window
         Set("disk",$"读 {Format.Size(v.DiskRead,true)}",$"写 {Format.Size(v.DiskWrite,true)} · {s.Drives.Count} 块本地卷",x=>x.DiskRead,x=>x.DiskWrite);
         Set("gpu",Format.Percent(v.Gpu),$"显存 {Format.Size(v.Vram)} · 最繁忙引擎",x=>x.Gpu,max:100);
         string temperatures=$"CPU {Format.Temp(v.CpuTemperature)} · GPU {Format.Temp(v.GpuTemperature)}";
-        Set("sensors",temperatures,s.Sensors.Count>0?$"{s.Sensors.Count} 个有效读数 · 点击查看":"硬件传感器尚未提供有效读数",x=>x.CpuTemperature);
+        Set("sensors",temperatures,s.Sensors.Count>0?$"{s.Sensors.Count} 个有效读数 · 点击查看":"硬件传感器尚未提供有效读数",x=>x.CpuTemperature,x=>x.GpuTemperature);
         status.Text=$"● 实时 · {app.Settings.Interval} 秒采样  {v.Time.ToLocalTime():HH:mm:ss}";
         if(app.History.Error!=null)status.Text="历史保存受限，实时采集继续";
         detail?.Refresh(s);
     }
     private void Set(string key,string value,string subtitle,Func<Sample,double?> selector,Func<Sample,double?>? secondary=null,double? max=null)
     {
-        var row=rows[key];row.Value.Text=value;row.Subtitle.Text=subtitle;row.Subtitle.ToolTip=subtitle;row.Chart.Samples=app.History.Read(TimeSpan.FromMinutes(10));row.Chart.Value=selector;row.Chart.Secondary=secondary;row.Chart.FixedMaximum=max;row.Chart.InvalidateVisual();
+        var row=rows[key];row.Value.Text=value;row.Subtitle.Text=subtitle;row.Subtitle.ToolTip=subtitle;row.Chart.Samples=app.History.Read(TimeSpan.FromMinutes(10));row.Chart.Value=selector;row.Chart.Secondary=secondary;row.Chart.FixedMaximum=max;
+        row.Chart.Height=secondary==null?42:54;
+        row.Chart.PrimaryLabel=key switch{"network"=>"下载","disk"=>"读取","memory"=>"已用内存","gpu"=>"GPU 占用","sensors"=>"CPU 温度",_=>"CPU 占用"};
+        row.Chart.SecondaryLabel=key switch{"network"=>"上传","disk"=>"写入","sensors"=>"GPU 温度",_=>""};
+        row.Chart.FormatValue=key switch{"network" or "disk"=>number=>Format.Size(number,true),"memory"=>number=>Format.Size(number),"sensors"=>Format.Temp,_=>Format.Percent};
+        row.Chart.InvalidateVisual();
     }
     public void Position()
     {

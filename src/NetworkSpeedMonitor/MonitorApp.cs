@@ -41,7 +41,9 @@ internal sealed class MonitorApp : Application
     }
     public MonitorApp(string[] args)
     {
-        InspectionMode=args.Contains("--inspect");ShutdownMode=ShutdownMode.OnExplicitShutdown;Advanced=new(Settings);
+        InspectionMode=args.Contains("--inspect");ShutdownMode=ShutdownMode.OnExplicitShutdown;
+        Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("pack://application:,,,/NetworkSpeedMonitor;component/Theme.xaml",UriKind.Absolute)});
+        Advanced=new(Settings);
         DispatcherUnhandledException+=(_,e)=>{Paths.Log(e.Exception.ToString());e.Handled=true;};
         Startup+=(_,_)=>Initialize(args);
         focusTimer=new DispatcherTimer{Interval=TimeSpan.FromMilliseconds(250)};focusTimer.Tick+=(_,_)=>CheckOutsideFocus();
@@ -72,7 +74,7 @@ internal sealed class MonitorApp : Application
         if(args.Contains("--show"))Dispatcher.BeginInvoke(ShowPanels);
         int detail=Array.IndexOf(args,"--detail");if(detail>=0&&detail+1<args.Length)Dispatcher.BeginInvoke(()=>{ShowPanels();overview.OpenDetail(args[detail+1],true);});
         if(args.Contains("--settings"))Dispatcher.BeginInvoke(ShowSettings);
-        Paths.Log("Started 0.1.1 "+Environment.ProcessPath);
+        Paths.Log("Started 0.1.2 "+Environment.ProcessPath);
     }
     [System.Runtime.InteropServices.DllImport("user32")] private static extern bool DestroyIcon(IntPtr icon);
     private async Task SampleLoop()
@@ -110,7 +112,7 @@ internal sealed class MonitorApp : Application
     private void PowerChanged(object sender,PowerModeChangedEventArgs e){if(e.Mode==PowerModes.Suspend){powerPaused=true;Dispatcher.BeginInvoke(HidePanels);}else if(e.Mode==PowerModes.Resume)powerPaused=false;}
     private void WriteStatus()
     {
-        File.WriteAllText(Path.Combine(Paths.Data,"diagnostic-latest.json"),JsonSerializer.Serialize(new{Version="0.1.1",ProcessId=Environment.ProcessId,Elevated=AdvancedCollector.Elevated,Taskbar=JsonSerializer.Deserialize<JsonElement>(taskbar?.Diagnostics(!paused)??"{}"),DetailsVisible=detailsVisible,OverviewVisible=overview?.IsVisible,NativeVisible=overview!=null&&Native.IsWindowVisible(new WindowInteropHelper(overview).Handle),Position=overview==null?null:new{overview.Left,overview.Top,overview.ActualWidth,overview.ActualHeight},Paused=paused,Snapshot=Latest},new JsonSerializerOptions{WriteIndented=true}));
+        File.WriteAllText(Path.Combine(Paths.Data,"diagnostic-latest.json"),JsonSerializer.Serialize(new{Version="0.1.2",ProcessId=Environment.ProcessId,Elevated=AdvancedCollector.Elevated,Taskbar=JsonSerializer.Deserialize<JsonElement>(taskbar?.Diagnostics(!paused)??"{}"),DetailsVisible=detailsVisible,OverviewVisible=overview?.IsVisible,NativeVisible=overview!=null&&Native.IsWindowVisible(new WindowInteropHelper(overview).Handle),Position=overview==null?null:new{overview.Left,overview.Top,overview.ActualWidth,overview.ActualHeight},Paused=paused,Snapshot=Latest},new JsonSerializerOptions{WriteIndented=true}));
     }
     private void Cleanup()
     {

@@ -1,6 +1,8 @@
 # NetworkSpeedMonitor Windows
 
-独立开发的 Windows 11 x64 任务栏系统监控程序。当前版本 0.1.1。Mac 版本仅作为产品交互参考，未修改或导入原仓库的 Git 历史。
+独立开发的 Windows 11 x64 任务栏系统监控程序。当前版本 0.1.2。Mac 版本仅作为产品交互参考，未修改或导入原仓库的 Git 历史。
+
+0.1.2 调整图表和滚动样式：网络下载/上传、磁盘读取/写入、CPU/GPU 温度分别上下展示，概览小图同步分区；所有图表支持鼠标左右移动时查看时间、实际读数和游标。排行及设置页采用深色细圆角滚动条。此次按用户要求仅编译、发布和重装，功能体验由用户验收。
 
 0.1.1 修复 Windows 11 任务栏只有托盘图标、监控区空白的问题。监控子窗口使用独立 layered surface，避免普通 GDI 绘制未进入任务栏 DirectComposition 合成结果。
 
@@ -40,7 +42,7 @@
 ./scripts/build.ps1 -Publish
 ```
 
-SDK 可位于项目 `.tools/dotnet` 或系统 PATH。`-Publish` 生成 `artifacts/NetworkSpeedMonitor-0.1.1-win-x64` 自包含发布目录。
+SDK 可位于项目 `.tools/dotnet` 或系统 PATH。`-Publish` 生成 `artifacts/NetworkSpeedMonitor-0.1.2-win-x64` 自包含发布目录；明确不运行测试时使用 `-Publish -SkipTests`。
 
 ## 诊断
 

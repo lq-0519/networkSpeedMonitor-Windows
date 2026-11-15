@@ -49,7 +49,7 @@ internal sealed class DetailWindow : Window
     {
         var transform=PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice??Matrix.Identity;
         var area=Native.WorkArea(new WindowInteropHelper(overview).Handle);var start=transform.Transform(new Point(area.Left,area.Top));var end=transform.Transform(new Point(area.Right,area.Bottom));
-        Height=Math.Min(620,Math.Max(380,end.Y-start.Y-24));
+        Height=Math.Min(720,Math.Max(380,end.Y-start.Y-24));
         Left=overview.Left-Width-9>=start.X?overview.Left-Width-9:Math.Min(end.X-Width-8,overview.Left+overview.Width+9);
         Left=Math.Max(start.X+8,Left);Top=Math.Clamp(overview.Top,start.Y+8,Math.Max(start.Y+8,end.Y-Height-8));
     }
@@ -60,19 +60,23 @@ internal sealed class DetailWindow : Window
         switch(key)
         {
             case "network":current.Text=$"↓ {Format.Size(v.Download,true)}";summary.Text=$"↑ {Format.Size(v.Upload,true)} · {s.Network}";chart.Value=x=>x.Download;chart.Secondary=x=>x.Upload;
-                note.Text="青色：下载 · 紫色：上传。物理网卡总量与应用排行统计层不同；代理流量可能归代理进程，排行包含本地通信。";IoRanking(s,true);break;
+                note.Text="上图下载，下图上传；移动鼠标查看对应时间与数值。代理流量可能归代理进程，应用排行与物理网卡总量属于不同统计层。";IoRanking(s,true);break;
             case "cpu":current.Text=Format.Percent(v.Cpu);summary.Text=$"{Environment.ProcessorCount} 个逻辑核心 · 整机满负载为 100%";chart.Value=x=>x.Cpu;chart.FixedMaximum=100;
                 ProcessRanking(s,p=>p.Cpu??0,true);break;
             case "memory":current.Text=Format.Size(v.Memory);summary.Text=$"可用 {Format.Size(s.AvailableMemory)} / 总量 {Format.Size(s.TotalMemory)}";chart.Value=x=>x.Memory;chart.FixedMaximum=s.TotalMemory;
                 note.Text=$"提交量 {Format.Size(s.Committed)} / {Format.Size(s.CommitLimit)}。应用排行按私有工作集分组，不能与整机已用量直接求和比较。";ProcessRanking(s,p=>p.Memory,false);break;
             case "disk":current.Text=$"读 {Format.Size(v.DiskRead,true)}";summary.Text=$"写 {Format.Size(v.DiskWrite,true)} · 全部物理磁盘";chart.Value=x=>x.DiskRead;chart.Secondary=x=>x.DiskWrite;
                 foreach(var drive in s.Drives)Line(drive.Name,$"可用 {Format.Size(drive.Free)} / {Format.Size(drive.Total)}");
-                note.Text="青色：读取 · 紫色：写入。排行来自磁盘事件；系统缓存、内核和权限限制可能使排行合计与物理磁盘吞吐不同。";IoRanking(s,false);break;
+                note.Text="上图读取，下图写入；移动鼠标查看时间与读数。排行来自磁盘事件，受系统缓存、内核和采集覆盖影响。";IoRanking(s,false);break;
             case "gpu":current.Text=Format.Percent(v.Gpu);summary.Text=$"独立显存已用 {Format.Size(v.Vram)}";chart.Value=x=>x.Gpu;chart.FixedMaximum=100;rankingTitle.Text="显卡传感器";
                 note.Text="GPU 占用取所有可读物理引擎中最繁忙的一项，不累加不同引擎百分比。显存显示占用最高适配器的独立显存。";Sensors(s,"Gpu");break;
             default:current.Text=$"CPU {Format.Temp(v.CpuTemperature)}";summary.Text=$"GPU {Format.Temp(v.GpuTemperature)} · CPU 功耗 {Format.Watts(v.CpuPower)}";chart.Value=x=>x.CpuTemperature;chart.Secondary=x=>x.GpuTemperature;rankingTitle.Text="实际可读传感器";
-                note.Text="青色：CPU 温度 · 紫色：GPU 温度。部件功耗不代表整机插座功耗；缺失的传感器显示不可用。";Sensors(s,null);break;
+                note.Text="上图 CPU 温度，下图 GPU 温度；移动鼠标查看读数。部件功耗不代表整机插座功耗，缺失的传感器显示不可用。";Sensors(s,null);break;
         }
+        chart.PrimaryLabel=key switch{"network"=>"下载","disk"=>"读取","memory"=>"已用内存","gpu"=>"GPU 占用","sensors"=>"CPU 温度",_=>"CPU 占用"};
+        chart.SecondaryLabel=key switch{"network"=>"上传","disk"=>"写入","sensors"=>"GPU 温度",_=>""};
+        chart.FormatValue=key switch{"network" or "disk"=>number=>Format.Size(number,true),"memory"=>number=>Format.Size(number),"sensors"=>Format.Temp,_=>Format.Percent};
+        chart.Height=chart.Secondary==null?(Height>=640?168:142):(Height>=640?232:196);
         chart.InvalidateVisual();if(ranking.Children.Count==0)Line("等待有效读数","首次采样需要建立基线");scroll.ScrollToVerticalOffset(oldOffset);
     }
     private void ProcessRanking(Snapshot s,Func<ProcessRow,double> value,bool cpu)
