@@ -18,10 +18,10 @@ internal static class Program
             if(args.Length>=3&&args[0]=="--collector"){AdvancedBridge.RunHelper(args[1],int.Parse(args[2])).GetAwaiter().GetResult();return 0;}
             if(args.Contains("--self-test")){return Diagnostics.SelfTest(args.Last());}
             if(args.Length>=3&&args[0]=="--diagnose"){Diagnostics.Sample(int.Parse(args[1]),args[2]);return 0;}
-            int command=args.Contains("--quit")?1:args.Contains("--status")?2:args.Contains("--settings")?3:0;
+            int command=args.Contains("--quit")?1:args.Contains("--status")?2:args.Contains("--settings")?3:args.Contains("--hide")?4:0;
             int detail=Array.IndexOf(args,"--detail");if(detail>=0&&detail+1<args.Length)command=10+Math.Max(0,Array.IndexOf(new[]{"network","cpu","memory","disk","gpu","sensors"},args[detail+1]));
             using var mutex=new Mutex(true,"Local\\NetworkSpeedMonitor.Windows",out bool first);
-            if(!first||command==1||command==2){var window=Native.FindWindow(null,"NetworkSpeedMonitor · 系统概览");if(window!=IntPtr.Zero)Native.PostMessage(window,0x802A,new IntPtr(command),IntPtr.Zero);return 0;}
+            if(!first||command==1||command==2||command==4){var window=Native.FindWindow(null,"NetworkSpeedMonitor · 系统概览");if(window!=IntPtr.Zero)Native.PostMessage(window,0x802A,new IntPtr(command),IntPtr.Zero);return 0;}
             return new MonitorApp(args).Run();
         }catch(Exception ex){Paths.Log(ex.ToString());return 1;}
     }

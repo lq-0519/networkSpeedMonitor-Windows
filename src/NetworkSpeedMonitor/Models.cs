@@ -43,11 +43,13 @@ internal sealed record Snapshot(Sample Sample, ulong TotalMemory, ulong Availabl
 
 internal static class Format
 {
+    private static readonly string[] RateUnits={"B/s","KB/s","MB/s","GB/s"};
+    private static readonly string[] SizeUnits={"B","KB","MB","GB","TB"};
     public static string Percent(double? value) => value is double v && double.IsFinite(v) ? $"{v:0}%" : "—";
     public static string Size(double? value, bool rate=false)
     {
         if (value is not double v || !double.IsFinite(v) || v<0) return "—";
-        string[] units=rate?new[]{"B/s","KB/s","MB/s","GB/s"}:new[]{"B","KB","MB","GB","TB"};
+        string[] units=rate?RateUnits:SizeUnits;
         int i=0; while(v>=1024 && i<units.Length-1){v/=1024;i++;}
         return v.ToString(i==0?"0":"0.0",System.Globalization.CultureInfo.InvariantCulture)+" "+units[i];
     }

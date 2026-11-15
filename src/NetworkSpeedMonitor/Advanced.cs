@@ -19,16 +19,18 @@ internal sealed class AdvancedCollector : IDisposable
 {
     private TraceEventSession? session;
     private readonly ConcurrentDictionary<int,long[]> counts=new();
-    private readonly Computer hardware=new(){IsCpuEnabled=true,IsGpuEnabled=true,IsMotherboardEnabled=true,IsStorageEnabled=true};
+    private Computer? hardware;
     private bool hardwareOpen;
     private double previousTime;
     private DateTimeOffset lastSensors;
     private List<SensorReading> sensors=new();
     private string status="尚未启动";
+    public bool IoEnabled {get;set;}=true;
     public bool HardwareEnabled {get;set;}=true;
     public static bool Elevated=>new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
     public void Start()
     {
+        if(!IoEnabled){StopTracing();status="硬件传感器按需采集";return;}
         if(session!=null)return;
         if(!Elevated){status="应用网络和磁盘排行需要管理员采集";return;}
         try
@@ -64,50 +66,77 @@ internal sealed class AdvancedCollector : IDisposable
         }
         // Bounded PID map; inactive entries are removed without retaining connection details.
         if(counts.Count>8192)counts.Clear();
-        if(!HardwareEnabled){sensors=new();if(hardwareOpen){try{hardware.Close();}catch{}hardwareOpen=false;}}
+        if(!HardwareEnabled)ReleaseHardware();
         if(HardwareEnabled&&DateTimeOffset.UtcNow-lastSensors>TimeSpan.FromSeconds(5))
         {
             lastSensors=DateTimeOffset.UtcNow;var next=new List<SensorReading>();
             try
             {
-                if(!hardwareOpen){hardware.Open();hardwareOpen=true;}
+                if(!hardwareOpen){hardware=new Computer{IsCpuEnabled=true,IsGpuEnabled=true,IsMotherboardEnabled=true,IsStorageEnabled=true};hardware.Open();hardwareOpen=true;}
                 void Visit(IHardware h){h.Update();foreach(var s in h.Sensors)if(s.Value is float value&&float.IsFinite(value)&&s.SensorType is SensorType.Temperature or SensorType.Fan or SensorType.Power){if(s.SensorType==SensorType.Power&&value<=0)continue;if(s.SensorType==SensorType.Temperature&&(value<=0||s.Name.Contains("Warning")||s.Name.Contains("Critical")))continue;next.Add(new(s.Name,s.SensorType.ToString(),h.HardwareType+" · "+h.Name,value));}foreach(var sub in h.SubHardware)Visit(sub);}
-                foreach(var h in hardware.Hardware)Visit(h);sensors=next;
+                foreach(var h in hardware!.Hardware)Visit(h);sensors=next;
             }catch(Exception ex){sensors=new();Paths.Log("Sensors: "+ex.Message);}
         }
         return new(DateTimeOffset.UtcNow,rows,sensors,status,session?.EventsLost??0);
     }
-    public void Stop(){var current=session;session=null;try{current?.Dispose();}catch{}counts.Clear();}
-    public void Dispose(){Stop();try{hardware.Close();}catch{}}
+    private void ReleaseHardware(){if(hardware!=null){try{hardware.Close();}catch{}hardware=null;}hardwareOpen=false;sensors=new();lastSensors=default;}
+    private void StopTracing(){var current=session;session=null;try{current?.Dispose();}catch{}counts.Clear();}
+    public void Stop(){StopTracing();ReleaseHardware();}
+    public void Dispose()=>Stop();
 }
 
 internal sealed class AdvancedBridge : IDisposable
 {
     private readonly Settings settings;
-    private readonly AdvancedCollector? local;
+    private AdvancedCollector? local;
+    private readonly bool useLocal;
+    private readonly SemaphoreSlim changed=new(0,1);
     private readonly CancellationTokenSource cancel=new();
     private NamedPipeServerStream? server;
     private StreamWriter? writer;
     private volatile bool active;
+    private bool requested,requestedIo=true,requestedHardware=true;
+    private volatile bool ioEnabled,hardwareEnabled;
+    private int lastInterval;
     private Task? loop;
     private AdvancedFrame? latest;
     public AdvancedFrame? Latest=>Volatile.Read(ref latest);
-    public string Status {get;private set;}="打开概览后采集应用排行";
-    public AdvancedBridge(Settings settings){this.settings=settings;if(AdvancedCollector.Elevated)local=new();}
-    public void SetActive(bool value)
+    public string Status {get;private set;}="进入对应详情后按需采集";
+    public AdvancedBridge(Settings settings){this.settings=settings;useLocal=AdvancedCollector.Elevated;}
+    private string StartCommand=>"start:"+settings.Interval+(hardwareEnabled?"":":nohardware")+(ioEnabled?"":":noio");
+    private async Task LocalLoop()
     {
-        active=value&&settings.AdvancedEnabled;
-        if(!active)Volatile.Write(ref latest,null);
-        if(local!=null)
+        while(!cancel.IsCancellationRequested)
         {
-            loop??=Task.Run(async()=>{while(!cancel.IsCancellationRequested){try{if(active){local.HardwareEnabled=settings.HardwareEnabled;local.Start();Volatile.Write(ref latest,local.Read());}else{local.Stop();Volatile.Write(ref latest,null);}await Task.Delay(1000,cancel.Token);}catch(OperationCanceledException){break;}catch(Exception ex){Status=ex.Message;Paths.Log("Advanced: "+ex.Message);}}});
+            try
+            {
+                if(active){local??=new AdvancedCollector();local.IoEnabled=ioEnabled;local.HardwareEnabled=hardwareEnabled;local.Start();var frame=local.Read();if(active)Volatile.Write(ref latest,frame);}
+                else{local?.Stop();Volatile.Write(ref latest,null);}
+                await changed.WaitAsync(active?TimeSpan.FromSeconds(settings.Interval):Timeout.InfiniteTimeSpan,cancel.Token);
+            }
+            catch(OperationCanceledException){break;}
+            catch(Exception ex){Status=ex.Message;Paths.Log("Advanced: "+ex.Message);try{await changed.WaitAsync(TimeSpan.FromSeconds(5),cancel.Token);}catch(OperationCanceledException){break;}}
         }
-        else if(writer!=null){try{writer.WriteLine(active?(settings.HardwareEnabled?"start":"start:nohardware"):"stop");}catch{Status="采集连接中断";}}
+    }
+    public void SetActive(bool value,bool io=true,bool hardware=true)
+    {
+        requested=value;requestedIo=io;requestedHardware=hardware;
+        bool nextIo=value&&io&&settings.AdvancedEnabled,nextHardware=value&&hardware&&settings.HardwareEnabled;
+        bool next=nextIo||nextHardware;
+        bool needsSignal=next!=active||lastInterval!=settings.Interval||ioEnabled!=nextIo||hardwareEnabled!=nextHardware;
+        ioEnabled=nextIo;hardwareEnabled=nextHardware;active=next;lastInterval=settings.Interval;
+        if(!active||needsSignal)Volatile.Write(ref latest,null);
+        if(useLocal)
+        {
+            if(loop==null){if(active)loop=Task.Run(LocalLoop);}
+            else if(needsSignal&&changed.CurrentCount==0)changed.Release();
+        }
+        else if(writer!=null){if(needsSignal)try{writer.WriteLine(active?StartCommand:"stop");}catch{Status="采集连接中断";}}
         else if(active)Status="点击「管理员采集」启用应用网络、磁盘排行及硬件传感器";
     }
     public async Task EnableAsync()
     {
-        settings.AdvancedEnabled=true;settings.Save();if(local!=null){SetActive(true);return;}
+        settings.AdvancedEnabled=true;settings.Save();SetActive(requested,requestedIo,requestedHardware);if(useLocal)return;
         if(server!=null)return;
         string pipe="NetworkSpeedMonitor-"+Environment.ProcessId+"-"+Guid.NewGuid().ToString("N");
         server=new NamedPipeServerStream(pipe,PipeDirection.InOut,1,PipeTransmissionMode.Byte,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);
@@ -115,7 +144,7 @@ internal sealed class AdvancedBridge : IDisposable
         {
             Process.Start(new ProcessStartInfo(Environment.ProcessPath!,"--collector "+pipe+" "+Environment.ProcessId){UseShellExecute=true,Verb="runas",WindowStyle=ProcessWindowStyle.Hidden});
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);timeout.CancelAfter(30_000);
-            await server.WaitForConnectionAsync(timeout.Token);writer=new StreamWriter(server){AutoFlush=true};writer.WriteLine(active?(settings.HardwareEnabled?"start":"start:nohardware"):"stop");Status="已连接管理员采集";
+            await server.WaitForConnectionAsync(timeout.Token);writer=new StreamWriter(server){AutoFlush=true};writer.WriteLine(active?StartCommand:"stop");Status="已连接管理员采集";
             loop=Task.Run(async()=>{using var reader=new StreamReader(server);while(!cancel.IsCancellationRequested){var line=await reader.ReadLineAsync(cancel.Token);if(line==null)break;if(active)Volatile.Write(ref latest,JsonSerializer.Deserialize<AdvancedFrame>(line));}});
         }
         catch(Exception ex){Status="管理员采集未启用："+ex.Message;server.Dispose();server=null;}
@@ -124,11 +153,17 @@ internal sealed class AdvancedBridge : IDisposable
     {
         using var client=new NamedPipeClientStream(".",pipe,PipeDirection.InOut,PipeOptions.Asynchronous|PipeOptions.CurrentUserOnly);await client.ConnectAsync(15_000);
         using var reader=new StreamReader(client);using var writer=new StreamWriter(client){AutoFlush=true};using var collector=new AdvancedCollector();
-        bool enabled=false;var read=reader.ReadLineAsync();
+        bool enabled=false;int interval=2;var read=reader.ReadLineAsync();
         while(client.IsConnected)
         {
+            if(!enabled||await Task.WhenAny(read,Task.Delay(interval*1000))==read)
+            {
+                string? command=await read;if(command==null||command=="exit")break;
+                var parts=command.Split(':');enabled=parts[0]=="start";collector.IoEnabled=!parts.Contains("noio");collector.HardwareEnabled=!parts.Contains("nohardware");
+                interval=parts.Select(p=>int.TryParse(p,out int n)?n:0).FirstOrDefault(n=>n is 1 or 2 or 5,2);
+                if(enabled)collector.Start();else collector.Stop();read=reader.ReadLineAsync();
+            }
             try{using var p=Process.GetProcessById(parent);if(p.HasExited)break;}catch{break;}
-            if(await Task.WhenAny(read,Task.Delay(1000))==read){string? command=await read;if(command==null||command=="exit")break;enabled=command.StartsWith("start",StringComparison.Ordinal);collector.HardwareEnabled=command!="start:nohardware";if(enabled)collector.Start();else collector.Stop();read=reader.ReadLineAsync();}
             if(enabled)await writer.WriteLineAsync(JsonSerializer.Serialize(collector.Read()));
         }
     }

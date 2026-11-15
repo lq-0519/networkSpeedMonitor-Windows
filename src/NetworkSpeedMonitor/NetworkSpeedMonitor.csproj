@@ -9,7 +9,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>NetworkSpeedMonitor</AssemblyName>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>

@@ -29,7 +29,8 @@ internal sealed class MonitorApp : Application
     private Forms.NotifyIcon? tray;
     private Forms.ContextMenuStrip? menu;
     private Icon? icon;
-    private volatile bool detailsVisible,sessionPaused,powerPaused,screenPaused;
+    private volatile bool detailsVisible,processRankingVisible,sessionPaused,powerPaused,screenPaused;
+    private uint shellMessage;
     private bool paused=>sessionPaused||powerPaused||screenPaused;
     private IntPtr powerNotification;
     private bool seenOwnForeground,lastMouseDown;
@@ -52,14 +53,18 @@ internal sealed class MonitorApp : Application
     private void Initialize(string[] args)
     {
         Directory.CreateDirectory(Paths.Data);overview=new OverviewWindow(this);var handle=new WindowInteropHelper(overview).EnsureHandle();
+        shellMessage=Native.RegisterWindowMessage("SHELLHOOK");
         HwndSource.FromHwnd(handle).AddHook((IntPtr h,int message,IntPtr w,IntPtr l,ref bool handled)=>
         {
             if(message==0x218&&w.ToInt32()==0x8013&&l!=IntPtr.Zero){var guid=System.Runtime.InteropServices.Marshal.PtrToStructure<Guid>(l);if(guid==new Guid("6fe69556-704a-47a0-8f24-c28d936fda47")){screenPaused=System.Runtime.InteropServices.Marshal.ReadInt32(l,20)==0;if(paused)HidePanels();}}
             if(message==0x0312){Toggle();handled=true;}
-            if(message==0x802A){int cmd=w.ToInt32();if(cmd==1)Shutdown();else if(cmd==2)WriteStatus();else if(cmd==3)ShowSettings();else if(cmd>=10){ShowPanels();overview.OpenDetail(new[]{"network","cpu","memory","disk","gpu","sensors"}[Math.Clamp(cmd-10,0,5)],true);}else ShowPanels();handled=true;}
+            if(shellMessage!=0&&(uint)message==shellMessage&&(w.ToInt32()==1||w.ToInt32()==2))taskbar?.RequestLayoutScan();
+            if(message==0x1A)taskbar?.RequestRedraw();
+            if(message==0x802A){int cmd=w.ToInt32();if(cmd==1)Shutdown();else if(cmd==2)WriteStatus();else if(cmd==3)ShowSettings();else if(cmd==4)HidePanels();else if(cmd>=10){ShowPanels();overview.OpenDetail(new[]{"network","cpu","memory","disk","gpu","sensors"}[Math.Clamp(cmd-10,0,5)],true);}else ShowPanels();handled=true;}
             return IntPtr.Zero;
         });
         Native.RegisterHotKey(handle,1,0x4003,0x4E);
+        Native.RegisterShellHookWindow(handle);
         var displaySetting=new Guid("6fe69556-704a-47a0-8f24-c28d936fda47");powerNotification=Native.RegisterPowerSettingNotification(handle,ref displaySetting,0);
         menu=new Forms.ContextMenuStrip();menu.Items.Add("打开资源概览",null,(_,_)=>Dispatcher.BeginInvoke(ShowPanels));menu.Items.Add("设置…",null,(_,_)=>Dispatcher.BeginInvoke(ShowSettings));menu.Items.Add("任务管理器",null,(_,_)=>Process.Start(new ProcessStartInfo("taskmgr.exe"){UseShellExecute=true}));menu.Items.Add(new Forms.ToolStripSeparator());menu.Items.Add("退出",null,(_,_)=>Dispatcher.BeginInvoke(()=>Shutdown()));
         using(var image=new Bitmap(32,32))
@@ -74,7 +79,7 @@ internal sealed class MonitorApp : Application
         if(args.Contains("--show"))Dispatcher.BeginInvoke(ShowPanels);
         int detail=Array.IndexOf(args,"--detail");if(detail>=0&&detail+1<args.Length)Dispatcher.BeginInvoke(()=>{ShowPanels();overview.OpenDetail(args[detail+1],true);});
         if(args.Contains("--settings"))Dispatcher.BeginInvoke(ShowSettings);
-        Paths.Log("Started 0.1.4 "+Environment.ProcessPath);
+        Paths.Log("Started 0.1.5 "+Environment.ProcessPath);
     }
     [System.Runtime.InteropServices.DllImport("user32")] private static extern bool DestroyIcon(IntPtr icon);
     private async Task SampleLoop()
@@ -86,7 +91,7 @@ internal sealed class MonitorApp : Application
             {
                 if(paused){wasPaused=true;await Task.Delay(1000,cancel.Token);continue;}
                 if(wasPaused||previousInterval!=Settings.Interval){sampler.Reset();wasPaused=false;previousInterval=Settings.Interval;}
-                var s=sampler.Read(detailsVisible,Advanced.Latest);History.Append(s.Sample);
+                var s=sampler.Read(processRankingVisible,Advanced.Latest);History.Append(s.Sample);
                 await Dispatcher.InvokeAsync(()=>{Latest=s;taskbar?.Update(s);if(overview?.IsVisible==true)overview.Refresh(s);if(tray!=null)tray.Text=$"CPU {Format.Percent(s.Sample.Cpu)} · ↓ {Format.Size(s.Sample.Download,true)} · ↑ {Format.Size(s.Sample.Upload,true)}";});
                 await Task.Delay(Settings.Interval*1000,cancel.Token);
             }catch(OperationCanceledException){break;}catch(Exception ex){Paths.Log("Sample: "+ex);try{await Task.Delay(2000,cancel.Token);}catch{break;}}
@@ -95,9 +100,15 @@ internal sealed class MonitorApp : Application
     public void Toggle(){if(overview?.IsVisible==true)HidePanels();else ShowPanels();}
     public void ShowPanels()
     {
-        if(paused||overview==null)return;detailsVisible=true;seenOwnForeground=false;lastMouseDown=(Native.GetAsyncKeyState(1)&0x8000)!=0;Advanced.SetActive(true);overview.Show();overview.Position();overview.Activate();Native.SetForegroundWindow(new WindowInteropHelper(overview).Handle);if(Latest!=null)overview.Refresh(Latest);focusTimer.Start();
+        if(paused||overview==null)return;detailsVisible=true;seenOwnForeground=false;lastMouseDown=(Native.GetAsyncKeyState(1)&0x8000)!=0;overview.Show();overview.Position();RefreshCollectionMode();overview.Activate();Native.SetForegroundWindow(new WindowInteropHelper(overview).Handle);if(Latest!=null)overview.Refresh(Latest);focusTimer.Start();
     }
-    public void HidePanels(){detailsVisible=false;Advanced.SetActive(false);overview?.HideAll();focusTimer.Stop();Task.Run(()=>History.Flush());}
+    public void HidePanels(){detailsVisible=false;SetDetailResource(null);overview?.HideAll();focusTimer.Stop();Task.Run(()=>History.Flush());}
+    public void SetDetailResource(string? key)
+    {
+        processRankingVisible=key is "network" or "cpu" or "memory" or "disk";
+        Advanced.SetActive(key is "network" or "disk" or "gpu" or "sensors",io:key is "network" or "disk",hardware:key is "gpu" or "sensors");
+    }
+    public void RefreshCollectionMode()=>SetDetailResource(overview?.ActiveDetailKey);
     public void CheckOutsideFocus()
     {
         if(!detailsVisible||overview==null)return;
@@ -112,7 +123,7 @@ internal sealed class MonitorApp : Application
     private void PowerChanged(object sender,PowerModeChangedEventArgs e){if(e.Mode==PowerModes.Suspend){powerPaused=true;Dispatcher.BeginInvoke(HidePanels);}else if(e.Mode==PowerModes.Resume)powerPaused=false;}
     private void WriteStatus()
     {
-        File.WriteAllText(Path.Combine(Paths.Data,"diagnostic-latest.json"),JsonSerializer.Serialize(new{Version="0.1.4",ProcessId=Environment.ProcessId,Elevated=AdvancedCollector.Elevated,Taskbar=JsonSerializer.Deserialize<JsonElement>(taskbar?.Diagnostics(!paused)??"{}"),DetailsVisible=detailsVisible,OverviewVisible=overview?.IsVisible,NativeVisible=overview!=null&&Native.IsWindowVisible(new WindowInteropHelper(overview).Handle),Position=overview==null?null:new{overview.Left,overview.Top,overview.ActualWidth,overview.ActualHeight},Paused=paused,Snapshot=Latest},new JsonSerializerOptions{WriteIndented=true}));
+        File.WriteAllText(Path.Combine(Paths.Data,"diagnostic-latest.json"),JsonSerializer.Serialize(new{Version="0.1.5",ProcessId=Environment.ProcessId,Elevated=AdvancedCollector.Elevated,Taskbar=JsonSerializer.Deserialize<JsonElement>(taskbar?.Diagnostics(!paused)??"{}"),DetailsVisible=detailsVisible,ActiveResource=overview?.ActiveDetailKey,ProcessRankingActive=processRankingVisible,OverviewVisible=overview?.IsVisible,NativeVisible=overview!=null&&Native.IsWindowVisible(new WindowInteropHelper(overview).Handle),Position=overview==null?null:new{overview.Left,overview.Top,overview.ActualWidth,overview.ActualHeight},Paused=paused,Snapshot=Latest},new JsonSerializerOptions{WriteIndented=true}));
     }
     private void Cleanup()
     {
@@ -120,7 +131,7 @@ internal sealed class MonitorApp : Application
         // UI dispatcher must remain free: sampler dispatch is awaited, so never synchronously wait for it here.
         taskbar?.Dispose();tray?.Dispose();menu?.Dispose();icon?.Dispose();Advanced.Dispose();History.Dispose();
         if(powerNotification!=IntPtr.Zero)Native.UnregisterPowerSettingNotification(powerNotification);
-        if(overview!=null)Native.UnregisterHotKey(new WindowInteropHelper(overview).Handle,1);
+        if(overview!=null){var handle=new WindowInteropHelper(overview).Handle;Native.UnregisterHotKey(handle,1);Native.DeregisterShellHookWindow(handle);}
         settingsWindow?.Close();overview?.CloseAll();
     }
 }

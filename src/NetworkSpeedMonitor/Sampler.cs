@@ -30,9 +30,32 @@ internal sealed class Sampler : IDisposable
     private (long Idle,long Total)? previousCpu;
     private string segment=Guid.NewGuid().ToString("N"), previousNetwork="";
     private double lastTime, lastDrives=-100;
+    private List<Native.InterfaceRow> selectedInterfaces=new();
+    private string selectedNetwork="";
+    private double nextInterfaceDiscovery;
+    private volatile bool networkChanged=true;
     private IReadOnlyList<(string Name,long Total,long Free)> drives=Array.Empty<(string,long,long)>();
-    public Sampler(Settings settings){this.settings=settings;}
-    public void Reset(){previousCpu=null;network.Clear();previousProcesses.Clear();segment=Guid.NewGuid().ToString("N");lastTime=0;}
+    public Sampler(Settings settings){this.settings=settings;NetworkChange.NetworkAddressChanged+=AddressChanged;NetworkChange.NetworkAvailabilityChanged+=AvailabilityChanged;}
+    private void AddressChanged(object? sender,EventArgs e)=>networkChanged=true;
+    private void AvailabilityChanged(object? sender,NetworkAvailabilityEventArgs e)=>networkChanged=true;
+    public void Reset(){previousCpu=null;network.Clear();previousProcesses.Clear();segment=Guid.NewGuid().ToString("N");lastTime=0;networkChanged=true;}
+    private List<Native.InterfaceRow> ActiveInterfaces(double now)
+    {
+        if(networkChanged||selectedNetwork!=settings.NetworkId||now>=nextInterfaceDiscovery)
+        {
+            networkChanged=false;selectedNetwork=settings.NetworkId;
+            selectedInterfaces=Interfaces().Where(n=>selectedNetwork.Length==0?DefaultAdapter(n):n.Guid.ToString().Equals(selectedNetwork.Trim('{','}'),StringComparison.OrdinalIgnoreCase)).ToList();
+            nextInterfaceDiscovery=now+(selectedInterfaces.Count==0?5:30);
+        }
+        var active=new List<Native.InterfaceRow>(selectedInterfaces.Count);
+        foreach(var known in selectedInterfaces)
+        {
+            var current=known;
+            if(Native.GetIfEntry2(ref current)!=0){networkChanged=true;continue;}
+            if(current.OperStatus==1)active.Add(current);
+        }
+        return active;
+    }
     private static List<Native.InterfaceRow> Interfaces()
     {
         var rows=new List<Native.InterfaceRow>();if(Native.GetIfTable2(out var table)!=0)return rows;
@@ -63,7 +86,7 @@ internal sealed class Sampler : IDisposable
         double? download=null,upload=null; string adapterName="未连接";
         try
         {
-            var active=Interfaces().Where(n=>n.OperStatus==1 && (settings.NetworkId.Length==0?DefaultAdapter(n):n.Guid.ToString().Equals(settings.NetworkId.Trim('{','}'),StringComparison.OrdinalIgnoreCase))).ToList();
+            var active=ActiveInterfaces(now);
             string key=string.Join("|",active.Select(n=>n.Guid).Order());
             if(key!=previousNetwork){network.Clear();previousNetwork=key;segment=Guid.NewGuid().ToString("N");}
             bool valid=active.Count>0;double down=0,up=0;
@@ -120,5 +143,5 @@ internal sealed class Sampler : IDisposable
         previousProcesses.Clear();foreach(var pair in next)previousProcesses[pair.Key]=pair.Value;
         return result;
     }
-    public void Dispose()=>counters.Dispose();
+    public void Dispose(){NetworkChange.NetworkAddressChanged-=AddressChanged;NetworkChange.NetworkAvailabilityChanged-=AvailabilityChanged;counters.Dispose();}
 }

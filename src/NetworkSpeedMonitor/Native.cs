@@ -63,6 +63,10 @@ internal static class Native
     [DllImport("user32")] internal static extern bool GetMonitorInfo(IntPtr h,ref MonitorInfo info);
     [DllImport("user32")] internal static extern bool RegisterHotKey(IntPtr h,int id,uint modifiers,uint key);
     [DllImport("user32")] internal static extern bool UnregisterHotKey(IntPtr h,int id);
+    [DllImport("user32",CharSet=CharSet.Unicode)] internal static extern uint RegisterWindowMessage(string text);
+    [DllImport("user32")] internal static extern bool RegisterShellHookWindow(IntPtr h);
+    [DllImport("user32")] internal static extern bool DeregisterShellHookWindow(IntPtr h);
+    [DllImport("iphlpapi")] internal static extern uint GetIfEntry2(ref InterfaceRow row);
     [DllImport("user32",SetLastError=true)] internal static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
     [DllImport("user32")] internal static extern IntPtr RegisterPowerSettingNotification(IntPtr recipient,ref Guid setting,uint flags);
     [DllImport("user32")] internal static extern bool UnregisterPowerSettingNotification(IntPtr handle);

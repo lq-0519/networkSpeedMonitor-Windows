@@ -9,6 +9,7 @@ internal sealed class Counters : IDisposable
 {
     private IntPtr query;
     private readonly Dictionary<string,IntPtr> handles=new();
+    private readonly Dictionary<string,(IntPtr Memory,uint Capacity)> buffers=new();
     [StructLayout(LayoutKind.Explicit,Size=16)] private struct Value { [FieldOffset(0)] public uint Status; [FieldOffset(8)] public double Number; }
     [StructLayout(LayoutKind.Sequential)] private struct Item { public IntPtr Name; public Value Value; }
     [DllImport("pdh",CharSet=CharSet.Unicode)] private static extern uint PdhOpenQuery(string? source,IntPtr data,out IntPtr query);
@@ -35,13 +36,18 @@ internal sealed class Counters : IDisposable
     {
         var result=new List<(string,double)>(); if(!handles.TryGetValue(name,out var h))return result;
         uint size=0; PdhGetFormattedCounterArray(h,0x200,ref size,out _,IntPtr.Zero); if(size==0||size>16_000_000)return result;
-        var memory=Marshal.AllocHGlobal((int)size);
-        try { if(PdhGetFormattedCounterArray(h,0x200,ref size,out var count,memory)!=0)return result;
-            int stride=Marshal.SizeOf<Item>();for(int i=0;i<count;i++){var item=Marshal.PtrToStructure<Item>(memory+i*stride); if(item.Value.Status<=1&&double.IsFinite(item.Value.Number))result.Add((Marshal.PtrToStringUni(item.Name)??"",Math.Max(0,item.Value.Number)));}
-        } finally {Marshal.FreeHGlobal(memory);} return result;
+        if(!buffers.TryGetValue(name,out var buffer)||buffer.Capacity<size)
+        {
+            if(buffer.Memory!=IntPtr.Zero)Marshal.FreeHGlobal(buffer.Memory);
+            buffer=(Marshal.AllocHGlobal((int)size),size);buffers[name]=buffer;
+        }
+        size=buffer.Capacity;
+        if(PdhGetFormattedCounterArray(h,0x200,ref size,out var count,buffer.Memory)!=0)return result;
+        int stride=Marshal.SizeOf<Item>();for(int i=0;i<count;i++){var item=Marshal.PtrToStructure<Item>(buffer.Memory+i*stride); if(item.Value.Status<=1&&double.IsFinite(item.Value.Number))result.Add((Marshal.PtrToStringUni(item.Name)??"",Math.Max(0,item.Value.Number)));}
+        return result;
     }
     // GPU engine usage is summed by physical engine across processes, then the busiest engine is used.
     public double? Gpu() { var values=Array("gpu"); if(values.Count==0)return null; return Math.Clamp(values.GroupBy(x=>x.Name.Contains("_luid_")?x.Name[(x.Name.IndexOf("_luid_",StringComparison.Ordinal)+1)..]:x.Name).Max(g=>g.Sum(x=>x.Number)),0,100); }
     public double? Vram() { var values=Array("vram"); return values.Count==0?null:values.Max(v=>v.Number); }
-    public void Dispose(){if(query!=IntPtr.Zero){PdhCloseQuery(query);query=IntPtr.Zero;}}
+    public void Dispose(){if(query!=IntPtr.Zero){PdhCloseQuery(query);query=IntPtr.Zero;}foreach(var buffer in buffers.Values)Marshal.FreeHGlobal(buffer.Memory);buffers.Clear();}
 }

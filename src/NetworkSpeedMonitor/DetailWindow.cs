@@ -18,7 +18,9 @@ internal sealed class DetailWindow : Window
     private readonly ScrollViewer scroll;
     private readonly Dictionary<string,bool> expanded=new();
     private readonly ComboBox order;
+    private readonly ProgressBar resourceMeter;
     private string key="network";
+    public string ResourceKey=>key;
     private TimeSpan range=TimeSpan.FromMinutes(10);
     public DetailWindow(MonitorApp app,OverviewWindow overview)
     {
@@ -27,6 +29,7 @@ internal sealed class DetailWindow : Window
         var root=new Grid{Margin=new Thickness(19)};root.RowDefinitions.Add(new RowDefinition{Height=GridLength.Auto});root.RowDefinitions.Add(new RowDefinition{Height=new GridLength(1,GridUnitType.Star)});
         var upper=new StackPanel();title=Ui.Text("网络详情",20,bold:true);upper.Children.Add(title);hint=Ui.Text("移动到其他资源切换 · 点击资源锁定",10,Ui.Muted);hint.Margin=new Thickness(0,5,0,12);upper.Children.Add(hint);
         current=Ui.Text("—",24,Ui.Accent,true);upper.Children.Add(current);summary=Ui.Text("",11,Ui.Muted);summary.Margin=new Thickness(0,5,0,12);upper.Children.Add(summary);
+        resourceMeter=new ProgressBar{Minimum=0,Maximum=100,Margin=new Thickness(0,0,0,12),Visibility=Visibility.Collapsed};upper.Children.Add(resourceMeter);
         var ranges=new StackPanel{Orientation=Orientation.Horizontal};foreach(var (label,seconds) in new[]{("1 分钟",60),("10 分钟",600),("1 小时",3600),("24 小时",86400)})
         {
             var radio=new RadioButton{Content=label,GroupName="range",Foreground=Ui.Brush(Ui.Muted),Margin=new Thickness(0,0,14,0),FontSize=11,IsChecked=seconds==600};radio.Checked+=(_,_)=>{range=TimeSpan.FromSeconds(seconds);if(app.Latest!=null)Refresh(app.Latest);};ranges.Children.Add(radio);
@@ -74,6 +77,9 @@ internal sealed class DetailWindow : Window
                 note.Text="上图 CPU 温度，下图 GPU 温度；移动鼠标查看读数。部件功耗不代表整机插座功耗，缺失的传感器显示不可用。";Sensors(s,null);break;
         }
         chart.PrimaryLabel=key switch{"network"=>"下载","disk"=>"读取","memory"=>"已用内存","gpu"=>"GPU 占用","sensors"=>"CPU 温度",_=>"CPU 占用"};
+        double? meterValue=key switch{"cpu"=>v.Cpu,"memory"=>s.TotalMemory>0?v.Memory/s.TotalMemory*100:null,"gpu"=>v.Gpu,_=>null};
+        resourceMeter.Visibility=meterValue is double n&&double.IsFinite(n)?Visibility.Visible:Visibility.Collapsed;
+        if(meterValue is double percentage)resourceMeter.Value=Math.Clamp(percentage,0,100);
         chart.Mirrored=key is "network" or "disk";
         chart.SecondaryLabel=key switch{"network"=>"上传","disk"=>"写入","sensors"=>"GPU 温度",_=>""};
         chart.FormatValue=key switch{"network" or "disk"=>number=>Format.Size(number,true),"memory"=>number=>Format.Size(number),"sensors"=>Format.Temp,_=>Format.Percent};

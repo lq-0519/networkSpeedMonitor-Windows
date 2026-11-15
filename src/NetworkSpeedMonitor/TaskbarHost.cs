@@ -21,6 +21,9 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
     private double buttonRight;
     private DateTime lastScan=DateTime.MinValue;
     private long paintCount;
+    private string? lastFrame;
+    private bool layoutDirty=true;
+    private (int Left,int Top,int Right,int Bottom,int TrayLeft) layoutGeometry;
     private StripLayout? cachedLayout;
     private (float Scale,bool Cpu,bool Memory) layoutKey;
     private readonly record struct StripLayout(float ArrowX,float ValueX,float StatsX,float StatsValueX,float PercentRight,float Width);
@@ -55,7 +58,14 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
         this.settings=settings;this.toggle=toggle;this.menu=menu;dispatcher=Dispatcher.CurrentDispatcher;
         timer=new DispatcherTimer{Interval=TimeSpan.FromSeconds(1)};timer.Tick+=(_,_)=>UpdatePosition();timer.Start();UpdatePosition();
     }
-    public void Update(Snapshot value){snapshot=value;if(Handle!=IntPtr.Zero)Native.InvalidateRect(Handle,IntPtr.Zero,false);}
+    public void Update(Snapshot value)
+    {
+        snapshot=value;
+        string frame=$"{Format.Percent(value.Sample.Cpu)}|{Format.Size(value.Sample.Download,true)}|{Format.Size(value.Sample.Upload,true)}|{Format.Percent(value.TotalMemory==0?null:value.Sample.Memory/value.TotalMemory*100)}|{settings.ShowCpu}|{settings.ShowMemory}";
+        if(frame==lastFrame)return;lastFrame=frame;RequestRedraw();
+    }
+    public void RequestRedraw(){if(Handle!=IntPtr.Zero)Native.InvalidateRect(Handle,IntPtr.Zero,false);}
+    public void RequestLayoutScan()=>layoutDirty=true;
     private void UpdatePosition()
     {
         if(disposed)return;
@@ -63,7 +73,7 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
         if(shell==IntPtr.Zero){Hide("未找到任务栏，仍可使用托盘入口");return;}
         if(taskbar!=shell||Handle==IntPtr.Zero||!Native.IsWindow(Handle))
         {
-            if(Handle!=IntPtr.Zero){if(Native.IsWindow(Handle))DestroyHandle();else ReleaseHandle();}taskbar=shell;occupancyKnown=false;
+            if(Handle!=IntPtr.Zero){if(Native.IsWindow(Handle))DestroyHandle();else ReleaseHandle();}taskbar=shell;occupancyKnown=false;layoutDirty=true;lastScan=DateTime.MinValue;
             // Win11 taskbar is hosted by DirectComposition. An ordinary GDI child can receive
             // WM_PAINT and hit tests while being absent from the composed screen. Give the
             // child its own layered surface, using constant alpha so GDI text stays opaque.
@@ -73,12 +83,14 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
         Native.GetWindowRect(taskbar,out var bar);
         var tray=Native.FindWindowEx(taskbar,IntPtr.Zero,"TrayNotifyWnd",null);
         if(tray==IntPtr.Zero||!Native.GetWindowRect(tray,out var trayRect)){Hide("系统托盘布局尚未就绪");return;}
+        var geometry=(bar.Left,bar.Top,bar.Right,bar.Bottom,trayRect.Left);
+        if(geometry!=layoutGeometry){layoutGeometry=geometry;layoutDirty=true;}
         double dpi=Math.Max(96,Native.GetDpiForWindow(taskbar))/96.0;
         int width=(int)Math.Ceiling(Layout((float)dpi).Width),height=Math.Min(bar.Height,(int)(46*dpi));
         int right=trayRect.Left-(int)(4*dpi)-settings.TaskbarOffset;
-        if(!scanning&&DateTime.UtcNow-lastScan>TimeSpan.FromSeconds(3))
+        if(!scanning&&((layoutDirty&&DateTime.UtcNow-lastScan>TimeSpan.FromMilliseconds(400))||DateTime.UtcNow-lastScan>TimeSpan.FromSeconds(15)))
         {
-            scanning=true;lastScan=DateTime.UtcNow;var captured=taskbar;var capturedBar=bar;var capturedTray=trayRect;
+            scanning=true;layoutDirty=false;lastScan=DateTime.UtcNow;var captured=taskbar;var capturedBar=bar;var capturedTray=trayRect;
             Task.Run(()=>
             {
                 double edge=capturedBar.Left;
@@ -96,9 +108,13 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
         int left=right-width;
         if(bar.Width<bar.Height||bar.Height<=4||left<buttonRight+8*dpi||left<bar.Left){Hide("任务栏空间不足，点击托盘图标展开");return;}
         int top=bar.Top+(bar.Height-height)/2;
-        Native.SetWindowPos(Handle,IntPtr.Zero,left-bar.Left,top-bar.Top,width,height,0x0010|0x0040);
-        Native.GetWindowRect(Handle,out var actual);Anchor=actual;Visible=true;Status="任务栏已嵌入";
-        Native.InvalidateRect(Handle,IntPtr.Zero,false);
+        if(!Visible||Anchor.Left!=left||Anchor.Top!=top||Anchor.Width!=width||Anchor.Height!=height)
+        {
+            Native.SetWindowPos(Handle,IntPtr.Zero,left-bar.Left,top-bar.Top,width,height,0x0010|0x0040);
+            Native.GetWindowRect(Handle,out var actual);Anchor=actual;RequestRedraw();
+        }
+        else if(Native.GetWindow(Handle,3)!=IntPtr.Zero)Native.SetWindowPos(Handle,IntPtr.Zero,0,0,0,0,0x0010|0x0001|0x0002);
+        Visible=true;Status="任务栏已嵌入";
     }
     private void Hide(string reason){if(Handle!=IntPtr.Zero)Native.ShowWindow(Handle,0);Visible=false;Status=reason;}
     protected override void WndProc(ref Forms.Message m)

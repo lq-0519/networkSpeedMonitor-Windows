@@ -28,8 +28,8 @@ internal sealed class SettingsWindow : Window
         Check("在任务栏显示实时数据",app.Settings.TaskbarEnabled,v=>app.Settings.TaskbarEnabled=v);
         Check("任务栏显示 CPU",app.Settings.ShowCpu,v=>app.Settings.ShowCpu=v);
         Check("任务栏显示内存",app.Settings.ShowMemory,v=>app.Settings.ShowMemory=v);
-        Check("启用详细硬件传感器（读取周期至少 5 秒）",app.Settings.HardwareEnabled,v=>{app.Settings.HardwareEnabled=v;app.Advanced.SetActive(app.DetailsVisible);});
-        Check("展开概览时采集应用网络 / 磁盘排行",app.Settings.AdvancedEnabled,v=>{app.Settings.AdvancedEnabled=v;app.Advanced.SetActive(app.DetailsVisible);});
+        Check("启用详细硬件传感器（读取周期至少 5 秒）",app.Settings.HardwareEnabled,v=>{app.Settings.HardwareEnabled=v;app.RefreshCollectionMode();});
+        Check("进入对应详情时采集应用网络 / 磁盘排行",app.Settings.AdvancedEnabled,v=>{app.Settings.AdvancedEnabled=v;app.RefreshCollectionMode();});
         using(var run=Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
             Check("登录 Windows 后自动启动",run?.GetValue("NetworkSpeedMonitor")!=null,v=>{using var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run");if(v)key.SetValue("NetworkSpeedMonitor","\""+Environment.ProcessPath+"\"");else key.DeleteValue("NetworkSpeedMonitor",false);});
         var offset=new Slider{Minimum=0,Maximum=800,TickFrequency=8,IsSnapToTickEnabled=true,Value=app.Settings.TaskbarOffset,Margin=new Thickness(0,8,0,17)};stack.Children.Add(Ui.Text("任务栏向左偏移（像素）",12,Ui.Muted));offset.ValueChanged+=(_,_)=>{app.Settings.TaskbarOffset=(int)offset.Value;app.Settings.Save();};stack.Children.Add(offset);

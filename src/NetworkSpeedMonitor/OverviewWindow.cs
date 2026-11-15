@@ -13,14 +13,15 @@ namespace NetworkSpeedMonitor;
 internal sealed class OverviewWindow : Window
 {
     private readonly MonitorApp app;
-    private readonly Dictionary<string,(TextBlock Value,TextBlock Subtitle,TrendChart Chart,Border Border)> rows=new();
+    private readonly Dictionary<string,(TextBlock Value,TextBlock Subtitle,Border Border)> rows=new();
     private readonly TextBlock status;
     private string? locked;
     private DetailWindow? detail;
     private bool changing;
+    public string? ActiveDetailKey=>detail?.IsVisible==true?detail.ResourceKey:null;
     public OverviewWindow(MonitorApp app)
     {
-        this.app=app;Title="NetworkSpeedMonitor · 系统概览";Width=350;SizeToContent=SizeToContent.Height;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=false;Topmost=true;AllowsTransparency=true;Background=Brushes.Transparent;FontFamily=new FontFamily("Segoe UI");
+        this.app=app;Title="NetworkSpeedMonitor · 系统概览";Width=310;SizeToContent=SizeToContent.Height;WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;ShowInTaskbar=false;Topmost=true;AllowsTransparency=true;Background=Brushes.Transparent;FontFamily=new FontFamily("Segoe UI");
         if(app.InspectionMode)ShowInTaskbar=true;
         var stack=new StackPanel{Margin=new Thickness(18)};
         var header=new DockPanel();var close=Ui.Button("×",()=>app.HidePanels());DockPanel.SetDock(close,Dock.Right);header.Children.Add(close);
@@ -41,45 +42,37 @@ internal sealed class OverviewWindow : Window
     }
     private void AddRow(StackPanel stack,string key,string icon,string name,Color color)
     {
-        var grid=new Grid();grid.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(1,GridUnitType.Star)});grid.ColumnDefinitions.Add(new ColumnDefinition{Width=new GridLength(88)});
-        var text=new StackPanel();var label=Ui.Text(icon+"  "+name,12,color);text.Children.Add(label);var value=Ui.Text("—",17,bold:true);value.Margin=new Thickness(0,4,0,2);text.Children.Add(value);var subtitle=Ui.Text("等待采样",10,Ui.Muted);text.Children.Add(subtitle);grid.Children.Add(text);
-        var chart=new TrendChart{Height=42,Compact=true,Color=color,VerticalAlignment=VerticalAlignment.Center};Grid.SetColumn(chart,1);grid.Children.Add(chart);
-        var border=Ui.Panel(grid,new Thickness(12,9,12,9));border.Cursor=Cursors.Hand;
+        var text=new StackPanel();var label=Ui.Text(icon+"  "+name,12,color);text.Children.Add(label);var value=Ui.Text("—",17,bold:true);value.Margin=new Thickness(0,4,0,2);text.Children.Add(value);var subtitle=Ui.Text("等待采样",10,Ui.Muted);text.Children.Add(subtitle);
+        var border=Ui.Panel(text,new Thickness(12,9,12,9));border.Cursor=Cursors.Hand;
         var button=new Button{Content=border,Style=(Style)FindResource("ResourceRowButton"),Background=Brushes.Transparent,BorderThickness=new Thickness(0),Padding=new Thickness(0),Margin=new Thickness(0,0,0,7),HorizontalContentAlignment=HorizontalAlignment.Stretch,Cursor=Cursors.Hand};
         System.Windows.Automation.AutomationProperties.SetName(button,name+"详情");
         button.MouseEnter+=(_,_)=>{if(locked==null)OpenDetail(key,false);};
         button.Click+=(_,_)=>{locked=locked==key?null:key;OpenDetail(key,locked!=null);};
-        stack.Children.Add(button);rows[key]=(value,subtitle,chart,border);
+        stack.Children.Add(button);rows[key]=(value,subtitle,border);
     }
     public void OpenDetail(string key,bool pinned)
     {
         changing=true;
-        try{detail??=new DetailWindow(app,this);detail.Select(key,pinned);if(!detail.IsVisible)detail.Show();detail.Position();Highlight(key);}finally{changing=false;}
+        try{app.SetDetailResource(key);detail??=new DetailWindow(app,this);detail.Select(key,pinned);if(!detail.IsVisible)detail.Show();detail.Position();Highlight(key);}finally{changing=false;}
     }
     private void Highlight(string key){foreach(var pair in rows)pair.Value.Border.BorderBrush=Ui.Brush(pair.Key==key?Ui.Accent:Ui.Stroke);}
     public void Refresh(Snapshot s)
     {
         var v=s.Sample;
-        Set("network",$"↓ {Format.Size(v.Download,true)}",$"↑ {Format.Size(v.Upload,true)} · {s.Network}",x=>x.Download,x=>x.Upload);
-        Set("cpu",Format.Percent(v.Cpu),"全部逻辑核心归一化 · 应用排行",x=>x.Cpu,max:100);
-        Set("memory",$"{Format.Size(v.Memory)} / {Format.Size(s.TotalMemory)}",$"可用 {Format.Size(s.AvailableMemory)} · {Format.Percent(v.Memory/s.TotalMemory*100)}",x=>x.Memory,max:s.TotalMemory);
-        Set("disk",$"读 {Format.Size(v.DiskRead,true)}",$"写 {Format.Size(v.DiskWrite,true)} · {s.Drives.Count} 块本地卷",x=>x.DiskRead,x=>x.DiskWrite);
-        Set("gpu",Format.Percent(v.Gpu),$"显存 {Format.Size(v.Vram)} · 最繁忙引擎",x=>x.Gpu,max:100);
+        Set("network",$"↓ {Format.Size(v.Download,true)}",$"↑ {Format.Size(v.Upload,true)} · {s.Network}");
+        Set("cpu",Format.Percent(v.Cpu),"全部逻辑核心归一化 · 应用排行");
+        Set("memory",$"{Format.Size(v.Memory)} / {Format.Size(s.TotalMemory)}",$"可用 {Format.Size(s.AvailableMemory)} · {Format.Percent(v.Memory/s.TotalMemory*100)}");
+        Set("disk",$"读 {Format.Size(v.DiskRead,true)}",$"写 {Format.Size(v.DiskWrite,true)} · {s.Drives.Count} 块本地卷");
+        Set("gpu",Format.Percent(v.Gpu),$"显存 {Format.Size(v.Vram)} · 最繁忙引擎");
         string temperatures=$"CPU {Format.Temp(v.CpuTemperature)} · GPU {Format.Temp(v.GpuTemperature)}";
-        Set("sensors",temperatures,s.Sensors.Count>0?$"{s.Sensors.Count} 个有效读数 · 点击查看":"硬件传感器尚未提供有效读数",x=>x.CpuTemperature,x=>x.GpuTemperature);
+        Set("sensors",temperatures,s.Sensors.Count>0?$"{s.Sensors.Count} 个有效读数 · 点击查看":"进入详情按需读取传感器");
         status.Text=$"● 实时 · {app.Settings.Interval} 秒采样  {v.Time.ToLocalTime():HH:mm:ss}";
         if(app.History.Error!=null)status.Text="历史保存受限，实时采集继续";
-        detail?.Refresh(s);
+        if(detail?.IsVisible==true)detail.Refresh(s);
     }
-    private void Set(string key,string value,string subtitle,Func<Sample,double?> selector,Func<Sample,double?>? secondary=null,double? max=null)
+    private void Set(string key,string value,string subtitle)
     {
-        var row=rows[key];row.Value.Text=value;row.Subtitle.Text=subtitle;row.Subtitle.ToolTip=subtitle;row.Chart.Samples=app.History.Read(TimeSpan.FromMinutes(10));row.Chart.Value=selector;row.Chart.Secondary=secondary;row.Chart.FixedMaximum=max;
-        row.Chart.Height=secondary==null?42:54;
-        row.Chart.Mirrored=key is "network" or "disk";
-        row.Chart.PrimaryLabel=key switch{"network"=>"下载","disk"=>"读取","memory"=>"已用内存","gpu"=>"GPU 占用","sensors"=>"CPU 温度",_=>"CPU 占用"};
-        row.Chart.SecondaryLabel=key switch{"network"=>"上传","disk"=>"写入","sensors"=>"GPU 温度",_=>""};
-        row.Chart.FormatValue=key switch{"network" or "disk"=>number=>Format.Size(number,true),"memory"=>number=>Format.Size(number),"sensors"=>Format.Temp,_=>Format.Percent};
-        row.Chart.InvalidateVisual();
+        var row=rows[key];row.Value.Text=value;row.Subtitle.Text=subtitle;row.Subtitle.ToolTip=subtitle;
     }
     public void Position()
     {
@@ -87,7 +80,7 @@ internal sealed class OverviewWindow : Window
         var work=Native.WorkArea(new WindowInteropHelper(this).Handle);var start=transform.Transform(new Point(work.Left,work.Top));var end=transform.Transform(new Point(work.Right,work.Bottom));
         Left=Math.Clamp(p.X-Width,start.X+8,Math.Max(start.X+8,end.X-Width-8));Top=Math.Max(start.Y+8,Math.Min(p.Y-ActualHeight-10,end.Y-ActualHeight-8));detail?.Position();
     }
-    public void HideAll(){locked=null;detail?.Hide();Hide();foreach(var row in rows.Values)row.Border.BorderBrush=Ui.Brush(Ui.Stroke);}
+    public void HideAll(){locked=null;detail?.Close();detail=null;Hide();foreach(var row in rows.Values)row.Border.BorderBrush=Ui.Brush(Ui.Stroke);}
     public bool OwnsForeground(IntPtr handle)=>new WindowInteropHelper(this).Handle==handle||(detail!=null&&new WindowInteropHelper(detail).Handle==handle);
     public void CloseAll(){detail?.Close();Close();}
 }
