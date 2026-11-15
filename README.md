@@ -1,0 +1,62 @@
+# NetworkSpeedMonitor Windows
+
+独立开发的 Windows 11 x64 任务栏系统监控程序。Mac 版本仅作为产品交互参考，未修改或导入原仓库的 Git 历史。
+
+## 使用
+
+- 在系统托盘左侧的任务栏空白处显示上传、下载、CPU 与内存；空间不足时自动隐藏该区域，托盘图标仍保留。
+- 单击任务栏监控区或托盘图标打开一级资源概览。悬停资源展开二级详情，点击资源锁定，再次点击解除。
+- Esc、再次单击入口或切到其他应用可关闭弹窗。Ctrl+Alt+N 可展开或收起。
+- 右键入口打开设置、任务管理器或退出。设置中可更换网卡、1/2/5 秒采样、排行数量、任务栏显示内容、位置偏移和登录启动。
+- 以普通用户运行即可读取基础指标和当前权限可读的进程。应用网络/磁盘排行和详细传感器通过“启用管理员采集”启动只读辅助进程，管理员密码只在 Windows UAC 中输入。辅助进程随主程序退出，无常驻系统服务。
+
+## 安装与卸载
+
+解压发布包后，在 PowerShell 中执行 `./install.ps1`。安装到 `%LOCALAPPDATA%\Programs\NetworkSpeedMonitor`，生成开始菜单和桌面快捷方式，并注册到 Windows 已安装应用。成品自带 .NET 运行时，不需要另装 SDK。
+
+通过 Windows 已安装应用卸载，或运行安装目录内 `uninstall.ps1`。卸载默认保留本地偏好和历史。
+
+## 数据口径和限制
+
+- 网络通过 IP Helper 原生接口表读取，默认只使用硬件以太网/Wi-Fi 接口，排除虚拟网卡、隧道及过滤接口；也可手动指定。
+- CPU 通过系统和进程时间差分，按全部逻辑核心归一化。应用按可执行文件路径分组，可以展开各进程。Windows 多程序宿主和同一应用的不同可执行文件会分别列出。
+- 内存排行采用私有工作集，整机采用总物理内存减可用量。排行合计不等于整机已用量。受保护或已退出进程的可读性由系统权限决定。
+- 磁盘吞吐使用全部物理磁盘性能计数器，不把逻辑卷再次累加。应用磁盘排行来自内核磁盘事件；缓存、内核 I/O 和归属覆盖可导致排行与总量不同。
+- 应用网络/磁盘排行使用专用 ETW 会话，仅在概览展开时采集，不干扰其他程序的会话。不抓取网络报文内容；网络排行包含本地通信，代理、隧道和物理网卡统计层不同，不能将其与总量简单相加比较。
+- GPU 使用各物理引擎按进程汇总后的最大利用率；显存取独立显存占用最高的适配器。虚拟显示器不会直接累加进 GPU 利用率。
+- 温度、转速、部件功耗使用 LibreHardwareMonitor；不安装额外硬件驱动、不修改安全设置。硬件未暴露或需要额外驱动的读数显示未知。传感器的温度阈值不作为实时温度，非正部件功耗不作为有效测量值。风扇停转可显示真实 0 RPM。
+- CPU/GPU 部件功率不代表整机或插座功耗。当前台式机无电池，不提供电池曲线和 Mac 专有功率流向。
+- 资源历史从应用运行时积累，保留 24 小时。SQLite 每分钟批量提交，关闭面板及正常退出时提交。休眠、锁屏、计数回退和采样缺口不补造曲线。历史只保存整机数值，不保存进程排行或连接明细。
+- 数据和日志位于 `%LOCALAPPDATA%\NetworkSpeedMonitor`，无统计上传、无在线账号。任务栏嵌入依赖 Windows Shell 布局，系统更新后可能需要适配；托盘入口保留为备用。
+
+## 构建
+
+需要 .NET 10 SDK。`global.json` 固定 10.0.404，并允许同特性版本补丁更新。
+
+```powershell
+./scripts/build.ps1
+./scripts/build.ps1 -Publish
+```
+
+SDK 可位于项目 `.tools/dotnet` 或系统 PATH。`-Publish` 生成 `artifacts/NetworkSpeedMonitor-0.1.0-win-x64` 自包含发布目录。
+
+## 诊断
+
+```powershell
+NetworkSpeedMonitor.exe --self-test C:\path\self-test.json
+NetworkSpeedMonitor.exe --diagnose 10 C:\path\diagnostics.json
+NetworkSpeedMonitor.exe --show
+NetworkSpeedMonitor.exe --detail cpu
+NetworkSpeedMonitor.exe --status
+NetworkSpeedMonitor.exe --quit
+```
+
+`--status` 将运行状态输出到本地数据目录的 `diagnostic-latest.json`。`--diagnose` 记录有限时长的只读诊断，可能包含进程路径，请只在本地使用。`--inspect --show` 提供界面验收模式，仅额外显示任务栏窗口按钮，便于辅助工具选择弹窗。
+
+## 本机首版验证
+
+目标机器：Windows 11 专业版、i5-10400F、约 16 GB 内存、RX 6700。
+
+已验证基础采集、物理网卡过滤、297 个以上进程的私有工作集、GPU 引擎与显存、ETW 应用活动、SQLite 提交重开，以及任务栏嵌入和概览/详情渲染。GPU 核心/热点温度、GPU 功耗、GPU 风扇及 SSD 实时温度可读；CPU 温度、CPU 功耗、主板风扇暂未获得有效读数。零功耗读数不会冒充有效测量。
+
+睡眠/锁屏恢复、多屏切换、Explorer 重启和普通权限/UAC 的完整交互仍需分别实测；相关容错与权限分离已实现。
