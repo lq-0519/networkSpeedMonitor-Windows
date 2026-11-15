@@ -1,6 +1,8 @@
 # NetworkSpeedMonitor Windows
 
-独立开发的 Windows 11 x64 任务栏系统监控程序。Mac 版本仅作为产品交互参考，未修改或导入原仓库的 Git 历史。
+独立开发的 Windows 11 x64 任务栏系统监控程序。当前版本 0.1.1。Mac 版本仅作为产品交互参考，未修改或导入原仓库的 Git 历史。
+
+0.1.1 修复 Windows 11 任务栏只有托盘图标、监控区空白的问题。监控子窗口使用独立 layered surface，避免普通 GDI 绘制未进入任务栏 DirectComposition 合成结果。
 
 ## 使用
 
@@ -38,7 +40,7 @@
 ./scripts/build.ps1 -Publish
 ```
 
-SDK 可位于项目 `.tools/dotnet` 或系统 PATH。`-Publish` 生成 `artifacts/NetworkSpeedMonitor-0.1.0-win-x64` 自包含发布目录。
+SDK 可位于项目 `.tools/dotnet` 或系统 PATH。`-Publish` 生成 `artifacts/NetworkSpeedMonitor-0.1.1-win-x64` 自包含发布目录。
 
 ## 诊断
 
@@ -51,7 +53,7 @@ NetworkSpeedMonitor.exe --status
 NetworkSpeedMonitor.exe --quit
 ```
 
-`--status` 将运行状态输出到本地数据目录的 `diagnostic-latest.json`。`--diagnose` 记录有限时长的只读诊断，可能包含进程路径，请只在本地使用。`--inspect --show` 提供界面验收模式，仅额外显示任务栏窗口按钮，便于辅助工具选择弹窗。
+`--status` 将运行状态输出到本地数据目录的 `diagnostic-latest.json`；桌面未暂停且监控条显示时，同时保存仅限本程序任务栏区域的 `taskbar-visible.png`，并报告实际屏幕文字像素和命中检查结果。不能仅凭 HWND 可见或 WM_PAINT 成功判断用户可见。`--diagnose` 记录有限时长的只读诊断，可能包含进程路径，请只在本地使用。`--inspect --show` 提供界面验收模式，仅额外显示任务栏窗口按钮，便于辅助工具选择弹窗。
 
 ## 本机首版验证
 

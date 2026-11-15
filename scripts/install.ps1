@@ -19,7 +19,7 @@ foreach($path in @($startMenu,$desktop)) { $shortcut=$shell.CreateShortcut($path
 $uninstallKey='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetworkSpeedMonitor.Windows'
 New-Item -Path $uninstallKey -Force | Out-Null
 $psExe=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$values=@{DisplayName='NetworkSpeedMonitor Windows';DisplayVersion='0.1.0';Publisher='NetworkSpeedMonitor';InstallLocation=$installRoot;DisplayIcon=$exe;UninstallString=('"'+$psExe+'" -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $installRoot 'uninstall.ps1')+'"');NoModify=1;NoRepair=1}
+$values=@{DisplayName='NetworkSpeedMonitor Windows';DisplayVersion='0.1.1';Publisher='NetworkSpeedMonitor';InstallLocation=$installRoot;DisplayIcon=$exe;UninstallString=('"'+$psExe+'" -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $installRoot 'uninstall.ps1')+'"');NoModify=1;NoRepair=1}
 foreach($pair in $values.GetEnumerator()){Set-ItemProperty -LiteralPath $uninstallKey -Name $pair.Key -Value $pair.Value}
 Write-Output ('Installed: '+$exe)
 if(-not $NoLaunch){Start-Process -FilePath $exe -ArgumentList '--show'}

@@ -20,6 +20,7 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
     private bool scanning,occupancyKnown,disposed;
     private double buttonRight;
     private DateTime lastScan=DateTime.MinValue;
+    private long paintCount;
     public string Status {get;private set;}="等待任务栏";
     public Native.Rect Anchor {get;private set;}
     public bool Visible {get;private set;}
@@ -37,7 +38,11 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
         if(taskbar!=shell||Handle==IntPtr.Zero||!Native.IsWindow(Handle))
         {
             if(Handle!=IntPtr.Zero){if(Native.IsWindow(Handle))DestroyHandle();else ReleaseHandle();}taskbar=shell;occupancyKnown=false;
-            CreateHandle(new Forms.CreateParams{Caption="NetworkSpeedMonitor 任务栏",Parent=taskbar,Style=0x40000000|0x04000000,ExStyle=0x00000080});
+            // Win11 taskbar is hosted by DirectComposition. An ordinary GDI child can receive
+            // WM_PAINT and hit tests while being absent from the composed screen. Give the
+            // child its own layered surface, using constant alpha so GDI text stays opaque.
+            CreateHandle(new Forms.CreateParams{Caption="NetworkSpeedMonitor 任务栏",Parent=taskbar,Style=0x40000000|0x04000000,ExStyle=0x00080080});
+            if(!Native.SetLayeredWindowAttributes(Handle,0,255,2))Paths.Log("Taskbar layered surface: "+System.Runtime.InteropServices.Marshal.GetLastWin32Error());
         }
         Native.GetWindowRect(taskbar,out var bar);
         var tray=Native.FindWindowEx(taskbar,IntPtr.Zero,"TrayNotifyWnd",null);
@@ -83,6 +88,7 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
     }
     private void Paint()
     {
+        paintCount++;
         var dc=Native.BeginPaint(Handle,out var paint);
         try
         {
@@ -106,6 +112,24 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
             using var target=Graphics.FromHdc(dc);target.DrawImageUnscaled(bitmap,0,0);
         }finally{Native.EndPaint(Handle,ref paint);}
     }
-    public string Diagnostics()=>JsonSerializer.Serialize(new{Status,Visible,Handle=Handle.ToInt64(),Taskbar=taskbar.ToInt64(),Anchor=new{Anchor.Left,Anchor.Top,Anchor.Right,Anchor.Bottom},buttonRight,occupancyKnown});
+    public string Diagnostics(bool captureVisible=true)
+    {
+        var hit=Native.WindowFromPoint(new Native.Point{X=(Anchor.Left+Anchor.Right)/2,Y=(Anchor.Top+Anchor.Bottom)/2});
+        string Class(IntPtr h){var text=new System.Text.StringBuilder(256);Native.GetClassName(h,text,text.Capacity);return text.ToString();}
+        int screenTextPixels=0,screenAccentPixels=0;string? visualCheckError=null;
+        if(captureVisible&&Visible&&Anchor.Width>0&&Anchor.Height>0)
+        {
+            // Regression check against the composed screen, restricted to this application's own strip.
+            // A successful WM_PAINT or hit test alone does not prove that DWM presents the child window.
+            try
+            {
+                using var screen=new Bitmap(Anchor.Width,Anchor.Height);
+                using(var graphics=Graphics.FromImage(screen))graphics.CopyFromScreen(Anchor.Left,Anchor.Top,0,0,screen.Size,CopyPixelOperation.SourceCopy);
+                for(int y=4;y<screen.Height-4;y+=2)for(int x=4;x<screen.Width-4;x+=2){var pixel=screen.GetPixel(x,y);if(pixel.R>205&&pixel.G>205&&pixel.B>205)screenTextPixels++;if(pixel.R>65&&pixel.R<150&&pixel.G>180&&pixel.B>180)screenAccentPixels++;}
+                screen.Save(System.IO.Path.Combine(Paths.Data,"taskbar-visible.png"),System.Drawing.Imaging.ImageFormat.Png);
+            }catch(Exception ex){visualCheckError=ex.Message;}
+        }
+        return JsonSerializer.Serialize(new{Status,Visible,Handle=Handle.ToInt64(),Taskbar=taskbar.ToInt64(),Anchor=new{Anchor.Left,Anchor.Top,Anchor.Right,Anchor.Bottom},buttonRight,occupancyKnown,paintCount,NativeVisible=Native.IsWindowVisible(Handle),HitWindow=hit.ToInt64(),HitClass=Class(hit),Parent=Native.GetParent(Handle).ToInt64(),PreviousSibling=Class(Native.GetWindow(Handle,3)),NextSibling=Class(Native.GetWindow(Handle,2)),screenTextPixels,screenAccentPixels,visualCheckError,VisualCheckPassed=captureVisible&&Native.IsWindowVisible(Handle)&&hit==Handle&&paintCount>0&&screenTextPixels>20&&screenAccentPixels>5});
+    }
     public void Dispose(){disposed=true;timer.Stop();if(Handle!=IntPtr.Zero)DestroyHandle();}
 }

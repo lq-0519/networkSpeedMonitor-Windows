@@ -52,6 +52,10 @@ internal static class Native
     [DllImport("user32")] internal static extern IntPtr BeginPaint(IntPtr h,out Paint paint);
     [DllImport("user32")] internal static extern bool EndPaint(IntPtr h,ref Paint paint);
     [DllImport("user32")] internal static extern bool GetCursorPos(out Point p);
+    [DllImport("user32")] internal static extern IntPtr WindowFromPoint(Point p);
+    [DllImport("user32")] internal static extern IntPtr GetParent(IntPtr h);
+    [DllImport("user32")] internal static extern IntPtr GetWindow(IntPtr h,uint command);
+    [DllImport("user32",SetLastError=true)] internal static extern bool SetLayeredWindowAttributes(IntPtr h,uint color,byte alpha,uint flags);
     [DllImport("user32")] internal static extern IntPtr GetForegroundWindow();
     [DllImport("user32")] internal static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32")] internal static extern short GetAsyncKeyState(int key);
