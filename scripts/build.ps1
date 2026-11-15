@@ -1,4 +1,4 @@
-param([switch]$Publish)
+﻿param([switch]$Publish)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $dotnetPath = Join-Path $projectRoot '.tools\dotnet\dotnet.exe'

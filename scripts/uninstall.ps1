@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 $installRoot=[IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
 $expected=[IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\NetworkSpeedMonitor')).TrimEnd('\')
 if($installRoot -ne $expected){throw 'This uninstaller only operates inside the named per-user installation directory.'}

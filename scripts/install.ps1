@@ -1,4 +1,4 @@
-param([switch]$NoLaunch)
+﻿param([switch]$NoLaunch)
 $ErrorActionPreference='Stop'
 $packageRoot=$PSScriptRoot
 $sourceExe=Join-Path $packageRoot 'NetworkSpeedMonitor.exe'
