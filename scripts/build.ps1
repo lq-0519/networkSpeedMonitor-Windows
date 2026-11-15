@@ -19,7 +19,7 @@ try {
         Get-Content -LiteralPath $testOutput
     }
     if ($Publish) {
-        $publishPath = Join-Path $projectRoot 'artifacts\NetworkSpeedMonitor-0.1.2-win-x64'
+        $publishPath = Join-Path $projectRoot 'artifacts\NetworkSpeedMonitor-0.1.3-win-x64'
         & $dotnetPath publish $projectFile -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=true -o $publishPath
         if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }
         Copy-Item -LiteralPath (Join-Path $projectRoot 'scripts\install.ps1'),(Join-Path $projectRoot 'scripts\uninstall.ps1'),(Join-Path $projectRoot 'README.md'),(Join-Path $projectRoot 'VALIDATION.md'),(Join-Path $projectRoot 'THIRD-PARTY-NOTICES.txt') -Destination $publishPath -Force

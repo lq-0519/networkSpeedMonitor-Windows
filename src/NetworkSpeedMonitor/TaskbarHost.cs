@@ -21,6 +21,32 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
     private double buttonRight;
     private DateTime lastScan=DateTime.MinValue;
     private long paintCount;
+    private StripLayout? cachedLayout;
+    private (float Scale,bool Cpu,bool Memory) layoutKey;
+    private readonly record struct StripLayout(float ArrowX,float ValueX,float StatsX,float StatsValueX,float PercentRight,float Width);
+
+    private StripLayout Layout(float scale)
+    {
+        var key=(scale,settings.ShowCpu,settings.ShowMemory);
+        if(cachedLayout is {} cached&&layoutKey==key)return cached;
+        using var bitmap=new Bitmap(1,1);
+        using var graphics=Graphics.FromImage(bitmap);
+        using var font=new Font("Segoe UI",11.5f*scale,FontStyle.Regular,GraphicsUnit.Pixel);
+        using var format=(StringFormat)StringFormat.GenericTypographic.Clone();
+        format.FormatFlags|=StringFormatFlags.NoWrap;
+        float Measure(string text)=>graphics.MeasureString(text,font,int.MaxValue,format).Width;
+        float arrowX=4*scale;
+        float valueX=arrowX+Math.Max(Measure("↓"),Measure("↑"))+3*scale;
+        // Reserve the longest normal speed once, so changing digits do not shift the columns.
+        float networkWidth=Measure("1023.9 MB/s");
+        float statsX=valueX+networkWidth+8*scale;
+        float labelWidth=Math.Max(settings.ShowCpu?Measure("CPU"):0,settings.ShowMemory?Measure("内存"):0);
+        float statsValueX=statsX+labelWidth+5*scale;
+        float percentRight=statsValueX+Measure("100%");
+        float width=(settings.ShowCpu||settings.ShowMemory?percentRight:valueX+networkWidth)+4*scale;
+        layoutKey=key;cachedLayout=new(arrowX,valueX,statsX,statsValueX,percentRight,width);
+        return cachedLayout.Value;
+    }
     public string Status {get;private set;}="等待任务栏";
     public Native.Rect Anchor {get;private set;}
     public bool Visible {get;private set;}
@@ -48,8 +74,8 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
         var tray=Native.FindWindowEx(taskbar,IntPtr.Zero,"TrayNotifyWnd",null);
         if(tray==IntPtr.Zero||!Native.GetWindowRect(tray,out var trayRect)){Hide("系统托盘布局尚未就绪");return;}
         double dpi=Math.Max(96,Native.GetDpiForWindow(taskbar))/96.0;
-        int width=(int)((settings.ShowCpu||settings.ShowMemory?246:138)*dpi),height=Math.Min(bar.Height,(int)(46*dpi));
-        int right=trayRect.Left-(int)(8*dpi)-settings.TaskbarOffset;
+        int width=(int)Math.Ceiling(Layout((float)dpi).Width),height=Math.Min(bar.Height,(int)(46*dpi));
+        int right=trayRect.Left-(int)(4*dpi)-settings.TaskbarOffset;
         if(!scanning&&DateTime.UtcNow-lastScan>TimeSpan.FromSeconds(3))
         {
             scanning=true;lastScan=DateTime.UtcNow;var captured=taskbar;var capturedBar=bar;var capturedTray=trayRect;
@@ -97,17 +123,22 @@ internal sealed class TaskbarHost : Forms.NativeWindow, IDisposable
             bool light=false;try{light=(int?)Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize","SystemUsesLightTheme",0)==1;}catch{}
             g.Clear(light?Color.FromArgb(243,243,243):Color.FromArgb(31,32,36));
             float scale=Math.Max(96,Native.GetDpiForWindow(taskbar))/96f;
+            var layout=Layout(scale);
             using var font=new Font("Segoe UI",11.5f*scale,FontStyle.Regular,GraphicsUnit.Pixel);
+            using var format=(StringFormat)StringFormat.GenericTypographic.Clone();
+            format.FormatFlags|=StringFormatFlags.NoWrap|StringFormatFlags.NoClip;
+            using var rightAligned=(StringFormat)format.Clone();rightAligned.Alignment=StringAlignment.Far;
             using var accent=new SolidBrush(light?Color.FromArgb(0,95,120):Color.FromArgb(102,221,223));
             using var text=new SolidBrush(light?Color.FromArgb(30,38,47):Color.FromArgb(241,244,249));
             float y1=Math.Max(1,(r.Height-32*scale)/2),y2=y1+17*scale;
-            void Draw(string label,string value,float x,float y){g.DrawString(label,font,accent,x,y);g.DrawString(value,font,text,x+19*scale,y);}
-            Draw("↓",Format.Size(snapshot?.Sample.Download,true),8*scale,y1);Draw("↑",Format.Size(snapshot?.Sample.Upload,true),8*scale,y2);
+            void Draw(string label,string value,float y){g.DrawString(label,font,accent,new PointF(layout.ArrowX,y),format);g.DrawString(value,font,text,new PointF(layout.ValueX,y),format);}
+            Draw("↓",Format.Size(snapshot?.Sample.Download,true),y1);Draw("↑",Format.Size(snapshot?.Sample.Upload,true),y2);
             if(settings.ShowCpu||settings.ShowMemory)
             {
-                float x=144*scale;using var labelBrush=new SolidBrush(light?Color.DimGray:Color.FromArgb(164,173,188));
-                if(settings.ShowCpu){g.DrawString("CPU",font,labelBrush,x,y1);g.DrawString(Format.Percent(snapshot?.Sample.Cpu),font,text,x+43*scale,y1);}
-                if(settings.ShowMemory){g.DrawString("内存",font,labelBrush,x,y2);g.DrawString(Format.Percent(snapshot is null||snapshot.TotalMemory==0?null:snapshot.Sample.Memory/snapshot.TotalMemory*100),font,text,x+43*scale,y2);}
+                using var labelBrush=new SolidBrush(light?Color.DimGray:Color.FromArgb(164,173,188));
+                void Stat(string label,string value,float y){g.DrawString(label,font,labelBrush,new PointF(layout.StatsX,y),format);g.DrawString(value,font,text,new RectangleF(layout.StatsValueX,y,layout.PercentRight-layout.StatsValueX,17*scale),rightAligned);}
+                if(settings.ShowCpu)Stat("CPU",Format.Percent(snapshot?.Sample.Cpu),y1);
+                if(settings.ShowMemory)Stat("内存",Format.Percent(snapshot is null||snapshot.TotalMemory==0?null:snapshot.Sample.Memory/snapshot.TotalMemory*100),y2);
             }
             using var target=Graphics.FromHdc(dc);target.DrawImageUnscaled(bitmap,0,0);
         }finally{Native.EndPaint(Handle,ref paint);}
