@@ -22,6 +22,7 @@ internal sealed class TrendChart : FrameworkElement
     public Color Color {get;set;}=Ui.Accent;
     public double? FixedMaximum {get;set;}
     public bool Compact {get;set;}
+    public bool Mirrored {get;set;}
 
     private static readonly Color SecondColor=Color.FromRgb(153,159,250);
     private readonly ToolTip hoverTip;
@@ -35,10 +36,11 @@ internal sealed class TrendChart : FrameworkElement
     private TimeSpan cachedRange;
     private Size cachedSize;
     private bool cachedCompact;
+    private bool cachedMirrored;
     private double? cachedMaximum;
     private Color cachedColor;
 
-    private sealed record Lane(Rect Plot,StreamGeometry Line,double Maximum,Color Color,Func<Sample,double?> Selector);
+    private sealed record Lane(Rect Plot,StreamGeometry Line,double Maximum,Color Color,Func<Sample,double?> Selector,bool Downward);
 
     public TrendChart()
     {
@@ -65,8 +67,17 @@ internal sealed class TrendChart : FrameworkElement
     {
         base.OnRender(dc);double width=ActualWidth,height=ActualHeight;if(width<12||height<16)return;
         dc.DrawRectangle(Brushes.Transparent,null,new Rect(0,0,width,height));
-        if(!ReferenceEquals(cachedSamples,Samples)||cachedValue!=Value||cachedSecondary!=Secondary||cachedRange!=Range||cachedSize!=RenderSize||cachedCompact!=Compact||cachedMaximum!=FixedMaximum||cachedColor!=Color)
+        if(!ReferenceEquals(cachedSamples,Samples)||cachedValue!=Value||cachedSecondary!=Secondary||cachedRange!=Range||cachedSize!=RenderSize||cachedCompact!=Compact||cachedMirrored!=Mirrored||cachedMaximum!=FixedMaximum||cachedColor!=Color)
             Rebuild(width,height);
+
+        bool mirrored=Mirrored&&lanes.Count==2;
+        if(mirrored)
+        {
+            var axis=lanes[0].Plot;
+            var axisPen=new Pen(Ui.Brush(Ui.Muted),Compact?0.7:1);
+            dc.DrawLine(axisPen,new Point(axis.Left,axis.Bottom),new Point(axis.Right,axis.Bottom));
+            if(!Compact)for(int tick=0;tick<=4;tick++){double x=axis.Left+axis.Width*tick/4;dc.DrawLine(axisPen,new Point(x,axis.Bottom-3),new Point(x,axis.Bottom+3));}
+        }
 
         Sample? selected=null;DateTimeOffset? selectedTime=null;double? cursorX=null;
         if(pointer is {} mouse&&lanes.Count>0)
@@ -83,17 +94,22 @@ internal sealed class TrendChart : FrameworkElement
             var lane=lanes[index];var plot=lane.Plot;string label=index==0?PrimaryLabel:SecondaryLabel;
             if(!Compact)
             {
-                Text(dc,label,plot.Left,plot.Top-20,11,lane.Color);
+                double labelY=mirrored&&index==1?plot.Bottom+4:plot.Top-20;
+                Text(dc,label,plot.Left,labelY,11,lane.Color);
                 double? reading=pointer!=null?(selected is null?null:lane.Selector(selected)):(points.Length==0?null:lane.Selector(points[^1]));
-                RightText(dc,FormatValue(reading),plot.Right,plot.Top-20,11,lane.Color);
+                RightText(dc,FormatValue(reading),plot.Right,labelY,11,lane.Color);
                 var gridPen=new Pen(Ui.Brush(Ui.Stroke),0.7);
-                for(int row=0;row<3;row++){double y=plot.Top+plot.Height*row/2;dc.DrawLine(gridPen,new Point(plot.Left,y),new Point(plot.Right,y));}
+                for(int row=0;row<3;row++)
+                {
+                    if(mirrored&&((index==0&&row==2)||(index==1&&row==0)))continue;
+                    double y=plot.Top+plot.Height*row/2;dc.DrawLine(gridPen,new Point(plot.Left,y),new Point(plot.Right,y));
+                }
             }
             else if(lanes.Count>1)
             {
                 string shortLabel=label switch{"下载"=>"↓","上传"=>"↑","读取"=>"读","写入"=>"写","CPU 温度"=>"C","GPU 温度"=>"G",_=>label.Length==0?"":label[..1]};
                 Text(dc,shortLabel,0,plot.Top+Math.Max(0,(plot.Height-10)/2),8,lane.Color);
-                dc.DrawLine(new Pen(Ui.Brush(Ui.Stroke),0.6),new Point(plot.Left,plot.Bottom),new Point(plot.Right,plot.Bottom));
+                if(!mirrored)dc.DrawLine(new Pen(Ui.Brush(Ui.Stroke),0.6),new Point(plot.Left,plot.Bottom),new Point(plot.Right,plot.Bottom));
             }
             dc.PushClip(new RectangleGeometry(new Rect(plot.Left-1,plot.Top-3,plot.Width+2,plot.Height+6)));
             dc.DrawGeometry(null,new Pen(Ui.Brush(lane.Color),Compact?1.35:1.8),lane.Line);
@@ -108,8 +124,23 @@ internal sealed class TrendChart : FrameworkElement
         }
         if(!Compact)
         {
-            Text(dc,start.ToLocalTime().ToString(Range.TotalHours>=1?"HH:mm":"HH:mm:ss"),3,height-17,10,Ui.Muted);
-            RightText(dc,"现在",width-3,height-17,10,Ui.Muted);
+            string startText=start.ToLocalTime().ToString(Range.TotalHours>=1?"HH:mm":"HH:mm:ss");
+            if(mirrored)
+            {
+                // One shared zero/time axis. Downward geometry changes presentation only;
+                // uploads/writes retain their positive values in labels and hover readouts.
+                double axisY=lanes[0].Plot.Bottom+3;
+                var leftLabel=Formatted(startText,9,Ui.Muted);var rightLabel=Formatted("现在",9,Ui.Muted);
+                var background=Ui.Brush(Ui.Background);
+                dc.DrawRectangle(background,null,new Rect(2,axisY-1,leftLabel.Width+5,leftLabel.Height+2));
+                dc.DrawRectangle(background,null,new Rect(width-rightLabel.Width-7,axisY-1,rightLabel.Width+5,rightLabel.Height+2));
+                dc.DrawText(leftLabel,new Point(3,axisY));dc.DrawText(rightLabel,new Point(width-rightLabel.Width-3,axisY));
+            }
+            else
+            {
+                Text(dc,startText,3,height-17,10,Ui.Muted);
+                RightText(dc,"现在",width-3,height-17,10,Ui.Muted);
+            }
             if(points.Length==0)Text(dc,"运行后逐步积累历史",Math.Max(4,width/2-60),height/2-8,11,Ui.Muted);
         }
         if(pointer is {} p&&selectedTime is {} time)
@@ -125,18 +156,30 @@ internal sealed class TrendChart : FrameworkElement
 
     private void Rebuild(double width,double height)
     {
-        cachedSamples=Samples;cachedValue=Value;cachedSecondary=Secondary;cachedRange=Range;cachedSize=RenderSize;cachedCompact=Compact;cachedMaximum=FixedMaximum;cachedColor=Color;
+        cachedSamples=Samples;cachedValue=Value;cachedSecondary=Secondary;cachedRange=Range;cachedSize=RenderSize;cachedCompact=Compact;cachedMirrored=Mirrored;cachedMaximum=FixedMaximum;cachedColor=Color;
         end=DateTimeOffset.UtcNow;start=end-Range;
         points=Samples.Where(s=>s.Time>=start&&s.Time<=end).OrderBy(s=>s.Time).ToArray();lanes.Clear();
         int count=Secondary==null?1:2;
+        bool mirrored=Mirrored&&count==2;
+        double sharedMaximum=mirrored?(FixedMaximum??Math.Max(1,points.Select(Value).Concat(points.Select(Secondary!)).Where(v=>v is double n&&double.IsFinite(n)).Select(v=>v!.Value).DefaultIfEmpty(0).Max()*1.1)):0;
         double bottom=Compact?1:24,gap=count==1?0:Compact?7:16;
         double bandHeight=(height-bottom-gap*(count-1))/count;
         for(int index=0;index<count;index++)
         {
             var selector=index==0?Value:Secondary!;var color=index==0?Color:SecondColor;
             double header=Compact?1:23;
-            var plot=new Rect(Compact?(count>1?12:1):3,index*(bandHeight+gap)+header,Math.Max(1,width-(Compact?(count>1?13:2):6)),Math.Max(2,bandHeight-header-2));
-            double max=FixedMaximum??Math.Max(1,points.Select(selector).Where(v=>v is double n&&double.IsFinite(n)).Select(v=>v!.Value).DefaultIfEmpty(0).Max()*1.1);
+            double left=Compact?(count>1?12:1):3;
+            double plotWidth=Math.Max(1,width-(Compact?(count>1?13:2):6));
+            Rect plot;
+            if(mirrored)
+            {
+                double top=Compact?1:23,plotBottom=height-(Compact?1:23);
+                double middle=(top+plotBottom)/2;
+                plot=index==0?new Rect(left,top,plotWidth,Math.Max(2,middle-top)):new Rect(left,middle,plotWidth,Math.Max(2,plotBottom-middle));
+            }
+            else plot=new Rect(left,index*(bandHeight+gap)+header,plotWidth,Math.Max(2,bandHeight-header-2));
+            bool downward=mirrored&&index==1;
+            double max=mirrored?sharedMaximum:(FixedMaximum??Math.Max(1,points.Select(selector).Where(v=>v is double n&&double.IsFinite(n)).Select(v=>v!.Value).DefaultIfEmpty(0).Max()*1.1));
             var geometry=new StreamGeometry();
             using(var context=geometry.Open())
             {
@@ -150,13 +193,13 @@ internal sealed class TrendChart : FrameworkElement
                     {
                         var value=selector(sample);
                         if(value is not double v||!double.IsFinite(v)){drawing=false;previous=sample;continue;}
-                        var point=new Point(TimeX(sample.Time,plot),plot.Bottom-Math.Clamp(v/max,0,1)*plot.Height);
+                        var point=new Point(TimeX(sample.Time,plot),PlotY(v,plot,max,downward));
                         if(!drawing||previous==null||previous.Segment!=sample.Segment||(sample.Time-previous.Time).TotalSeconds>20){context.BeginFigure(point,false,false);drawing=true;}else context.LineTo(point,true,false);
                         previous=sample;
                     }
                 }
             }
-            geometry.Freeze();lanes.Add(new(plot,geometry,max,color,selector));
+            geometry.Freeze();lanes.Add(new(plot,geometry,max,color,selector,downward));
         }
     }
     private Sample? Closest(DateTimeOffset time)
@@ -169,7 +212,8 @@ internal sealed class TrendChart : FrameworkElement
         return Math.Abs((result.Time-time).TotalSeconds)<=8?result:null;
     }
     private double TimeX(DateTimeOffset time,Rect plot)=>plot.Left+(time-start).TotalSeconds/Math.Max(1,Range.TotalSeconds)*plot.Width;
-    private static double ValueY(double value,Lane lane)=>lane.Plot.Bottom-Math.Clamp(value/lane.Maximum,0,1)*lane.Plot.Height;
+    private static double PlotY(double value,Rect plot,double maximum,bool downward)=>downward?plot.Top+Math.Clamp(value/maximum,0,1)*plot.Height:plot.Bottom-Math.Clamp(value/maximum,0,1)*plot.Height;
+    private static double ValueY(double value,Lane lane)=>PlotY(value,lane.Plot,lane.Maximum,lane.Downward);
     private void Text(DrawingContext dc,string text,double x,double y,double size,Color color)=>dc.DrawText(Formatted(text,size,color),new Point(x,y));
     private void RightText(DrawingContext dc,string text,double right,double y,double size,Color color){var formatted=Formatted(text,size,color);dc.DrawText(formatted,new Point(Math.Max(0,right-formatted.Width),y));}
     private FormattedText Formatted(string text,double size,Color color)=>new(text,CultureInfo.CurrentCulture,FlowDirection.LeftToRight,new Typeface("Segoe UI"),size,Ui.Brush(color),VisualTreeHelper.GetDpi(this).PixelsPerDip);

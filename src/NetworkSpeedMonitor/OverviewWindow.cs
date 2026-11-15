@@ -75,6 +75,7 @@ internal sealed class OverviewWindow : Window
     {
         var row=rows[key];row.Value.Text=value;row.Subtitle.Text=subtitle;row.Subtitle.ToolTip=subtitle;row.Chart.Samples=app.History.Read(TimeSpan.FromMinutes(10));row.Chart.Value=selector;row.Chart.Secondary=secondary;row.Chart.FixedMaximum=max;
         row.Chart.Height=secondary==null?42:54;
+        row.Chart.Mirrored=key is "network" or "disk";
         row.Chart.PrimaryLabel=key switch{"network"=>"下载","disk"=>"读取","memory"=>"已用内存","gpu"=>"GPU 占用","sensors"=>"CPU 温度",_=>"CPU 占用"};
         row.Chart.SecondaryLabel=key switch{"network"=>"上传","disk"=>"写入","sensors"=>"GPU 温度",_=>""};
         row.Chart.FormatValue=key switch{"network" or "disk"=>number=>Format.Size(number,true),"memory"=>number=>Format.Size(number),"sensors"=>Format.Temp,_=>Format.Percent};
